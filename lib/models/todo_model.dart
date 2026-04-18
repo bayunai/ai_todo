@@ -86,8 +86,9 @@ class TodoModel extends HiveObject {
   @HiveField(3)
   int priority;
 
-  @HiveField(4)
-  DateTime? dueAt;
+  // NOTE: HiveField id 4 / 11 / 12 / 13 历史上分别是 dueAt / dueEndAt /
+  // dueRepeatRule / dueIsAllDay，已彻底移除。这些 id 保留不再使用，
+  // 旧记录里的槽位字节在反序列化时会被丢弃。
 
   @HiveField(5)
   DateTime? remindAt;
@@ -109,18 +110,6 @@ class TodoModel extends HiveObject {
   @HiveField(10)
   DateTime createdAt;
 
-  /// 截止时间段终点（null 表示时间点）
-  @HiveField(11)
-  DateTime? dueEndAt;
-
-  /// 截止时间的重复规则，见 [TodoRepeat]
-  @HiveField(12, defaultValue: 0)
-  int dueRepeatRule;
-
-  /// 截止是否全天（true 时忽略具体时分）
-  @HiveField(13, defaultValue: false)
-  bool dueIsAllDay;
-
   /// 提醒时间段终点（仅展示，不影响调度）
   @HiveField(14)
   DateTime? remindEndAt;
@@ -138,16 +127,12 @@ class TodoModel extends HiveObject {
     required this.title,
     this.note = '',
     this.priority = TodoPriority.normal,
-    this.dueAt,
     this.remindAt,
     this.done = false,
     this.doneAt,
     this.parentId,
     this.orderIndex = 0,
     required this.createdAt,
-    this.dueEndAt,
-    this.dueRepeatRule = TodoRepeat.none,
-    this.dueIsAllDay = false,
     this.remindEndAt,
     this.remindRepeatRule = TodoRepeat.none,
     this.remindIsAllDay = false,
@@ -157,13 +142,9 @@ class TodoModel extends HiveObject {
     required String title,
     String note = '',
     int priority = TodoPriority.normal,
-    DateTime? dueAt,
     DateTime? remindAt,
     String? parentId,
     int orderIndex = 0,
-    DateTime? dueEndAt,
-    int dueRepeatRule = TodoRepeat.none,
-    bool dueIsAllDay = false,
     DateTime? remindEndAt,
     int remindRepeatRule = TodoRepeat.none,
     bool remindIsAllDay = false,
@@ -174,24 +155,13 @@ class TodoModel extends HiveObject {
       title: title,
       note: note,
       priority: priority,
-      dueAt: dueAt,
       remindAt: remindAt,
       parentId: parentId,
       orderIndex: orderIndex,
       createdAt: now,
-      dueEndAt: dueEndAt,
-      dueRepeatRule: dueRepeatRule,
-      dueIsAllDay: dueIsAllDay,
       remindEndAt: remindEndAt,
       remindRepeatRule: remindRepeatRule,
       remindIsAllDay: remindIsAllDay,
     );
-  }
-
-  bool get isOverdue {
-    if (done) return false;
-    final d = dueAt;
-    if (d == null) return false;
-    return d.isBefore(DateTime.now());
   }
 }

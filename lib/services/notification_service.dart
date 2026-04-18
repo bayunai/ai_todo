@@ -95,7 +95,7 @@ class NotificationService {
   static const String _panelChannelId = 'todo_panel';
   static const String _panelChannelName = '待办面板';
   static const String _panelChannelDesc = '状态栏常驻，显示待办进度与快速操作';
-  static const int _panelId = 2026_04_18;
+  static const int _panelId = 20260418;
 
   /// 面板点击体本身对应的 payload（只切 Tab，不做额外动作）
   static const String panelOpenPayload = 'panel:open';
@@ -601,12 +601,18 @@ class NotificationService {
     var done = 0;
     var overdue = 0;
     final pendingList = <TodoModel>[];
+    final nowTs = DateTime.now();
+    bool isOverdue(TodoModel t) {
+      final r = t.remindAt;
+      return r != null && r.isBefore(nowTs);
+    }
+
     for (final t in todos) {
       if (t.done) {
         done++;
       } else {
         pendingList.add(t);
-        if (t.isOverdue) overdue++;
+        if (isOverdue(t)) overdue++;
       }
     }
     final pending = pendingList.length;
@@ -623,19 +629,19 @@ class NotificationService {
       body = '还有 $pending 条进行中';
     }
 
-    // 详细样式：BigText 多行列出前 5 条未完成待办（逾期优先、然后按截止时间升序）
+    // 详细样式：BigText 多行列出前 5 条未完成待办（逾期优先、然后按提醒时间升序）
     StyleInformation? style;
     if (panelStyle == PanelStyleMode.detailed && pendingList.isNotEmpty) {
       pendingList.sort((a, b) {
-        final ao = a.isOverdue ? 0 : 1;
-        final bo = b.isOverdue ? 0 : 1;
+        final ao = isOverdue(a) ? 0 : 1;
+        final bo = isOverdue(b) ? 0 : 1;
         if (ao != bo) return ao - bo;
-        final ad = a.dueAt?.millisecondsSinceEpoch ?? 1 << 62;
-        final bd = b.dueAt?.millisecondsSinceEpoch ?? 1 << 62;
+        final ad = a.remindAt?.millisecondsSinceEpoch ?? 1 << 62;
+        final bd = b.remindAt?.millisecondsSinceEpoch ?? 1 << 62;
         return ad.compareTo(bd);
       });
       final top = pendingList.take(5).map((t) {
-        final prefix = t.isOverdue ? '⚠ ' : '• ';
+        final prefix = isOverdue(t) ? '⚠ ' : '• ';
         return '$prefix${t.title.isEmpty ? '(未命名)' : t.title}';
       }).join('\n');
       final more = pendingList.length > 5

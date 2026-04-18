@@ -5,6 +5,7 @@ import 'calendar_page.dart';
 import 'schedule_page.dart';
 import 'services/notification_service.dart';
 import 'settings_page.dart';
+import 'timeline_page.dart';
 import 'todo_page.dart';
 
 class MainPage extends StatefulWidget {
@@ -18,7 +19,15 @@ class _MainPageState extends State<MainPage> {
   int _currentIndex = 0;
   StreamSubscription<String>? _notificationSub;
 
+  /// 底部导航对应的 Tab 索引常量，避免硬编码数字满处飞。
+  static const int _kTimelineIndex = 0;
+  static const int _kCalendarIndex = 1;
+  static const int _kScheduleIndex = 2;
+  static const int _kTodoIndex = 3;
+  static const int _kSettingsIndex = 4;
+
   final List<Widget> _pages = [
+    const TimelinePage(),
     const CalendarPage(),
     const SchedulePage(),
     const TodoPage(),
@@ -30,11 +39,11 @@ class _MainPageState extends State<MainPage> {
     super.initState();
     // 冷启动通过通知拉起：先切到待办 tab，payload 保留给 TodoPage 消费
     if (NotificationService.hasPendingPayload) {
-      _currentIndex = 2;
+      _currentIndex = _kTodoIndex;
     }
     _notificationSub = NotificationService.onTap.listen((_) {
       if (!mounted) return;
-      setState(() => _currentIndex = 2);
+      setState(() => _currentIndex = _kTodoIndex);
     });
   }
 
@@ -134,10 +143,13 @@ class _MainPageState extends State<MainPage> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _buildNavItem(0, Icons.calendar_today, '日历'),
-                  _buildNavItem(1, Icons.schedule, '班表'),
-                  _buildNavItem(2, Icons.checklist, '待办'),
-                  _buildNavItem(3, Icons.settings, '设置'),
+                  _buildNavItem(
+                      _kTimelineIndex, Icons.view_timeline_outlined, '时间线'),
+                  _buildNavItem(
+                      _kCalendarIndex, Icons.calendar_today, '日历'),
+                  _buildNavItem(_kScheduleIndex, Icons.schedule, '班表'),
+                  _buildNavItem(_kTodoIndex, Icons.checklist, '待办'),
+                  _buildNavItem(_kSettingsIndex, Icons.settings, '设置'),
                 ],
               ),
             ),
