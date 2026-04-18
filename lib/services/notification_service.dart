@@ -194,7 +194,9 @@ class NotificationService {
             presentSound: true,
           ),
         ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        // 使用 alarmClock：底层是 AlarmManager.setAlarmClock()，
+        // 豁免 Doze / App Standby / MIUI 等 OEM 的电量限制，锁屏后仍按时触发
+        androidScheduleMode: AndroidScheduleMode.alarmClock,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         payload: todo.id,

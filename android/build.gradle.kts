@@ -41,6 +41,12 @@ subprojects {
             compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
         }
     }
+    // 某些插件（如 flutter_local_notifications）自己在 build.gradle 里把 Java 版本
+    // 锁回 8；Gradle 会对 source/target=8 打 "obsolete options" 警告。这里给所有
+    // library 模块的 javac 追加 -Xlint:-options 将其消音；不改变实际编译版本。
+    tasks.withType<JavaCompile>().configureEach {
+        options.compilerArgs.add("-Xlint:-options")
+    }
 }
 
 tasks.register<Delete>("clean") {
