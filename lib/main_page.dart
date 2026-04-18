@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'calendar_page.dart';
 import 'schedule_page.dart';
+import 'todo_page.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -15,7 +16,7 @@ class _MainPageState extends State<MainPage> {
   final List<Widget> _pages = [
     const CalendarPage(),
     const SchedulePage(),
-    const PlaceholderPage(title: '待办事项'),
+    const TodoPage(),
     const PlaceholderPage(title: '设置'),
   ];
 

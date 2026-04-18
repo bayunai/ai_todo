@@ -1,15 +1,18 @@
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/event_model.dart';
 import '../models/shift_model.dart';
+import '../models/todo_model.dart';
 
 class HiveService {
   static const String eventsBoxName = 'events';
   static const String shiftsBoxName = 'shifts';
+  static const String todosBoxName = 'todos';
 
   // 初始化 Hive
   static Future<void> init() async {
     await Hive.initFlutter();
-    
+
     // 注册适配器
     if (!Hive.isAdapterRegistered(0)) {
       Hive.registerAdapter(EventModelAdapter());
@@ -17,10 +20,14 @@ class HiveService {
     if (!Hive.isAdapterRegistered(1)) {
       Hive.registerAdapter(ShiftModelAdapter());
     }
+    if (!Hive.isAdapterRegistered(2)) {
+      Hive.registerAdapter(TodoModelAdapter());
+    }
 
     // 打开 Box
     await Hive.openBox<EventModel>(eventsBoxName);
     await Hive.openBox<ShiftModel>(shiftsBoxName);
+    await Hive.openBox<TodoModel>(todosBoxName);
   }
 
   // ========== 事件相关操作 ==========
@@ -127,6 +134,105 @@ class HiveService {
     final list = _eventsBox.values.toList();
     final index = list.indexWhere((e) => e.id == event.id);
     return index != -1 ? index : null;
+  }
+
+  // ========== 待办相关操作 ==========
+
+  static Box<TodoModel> get _todosBox => Hive.box<TodoModel>(todosBoxName);
+
+  /// 监听待办 Box 变更（供 ValueListenableBuilder 使用）
+  static ValueListenable<Box<TodoModel>> listenableTodos() =>
+      _todosBox.listenable();
+
+  static List<TodoModel> getAllTodos() => _todosBox.values.toList();
+
+  static TodoModel? getTodoById(String id) {
+    for (final t in _todosBox.values) {
+      if (t.id == id) return t;
+    }
+    return null;
+  }
+
+  static List<TodoModel> getChildren(String? parentId) {
+    return _todosBox.values.where((t) => t.parentId == parentId).toList();
+  }
+
+  /// 同级最大 orderIndex + 1
+  static int nextOrderIndex(String? parentId) {
+    final siblings = getChildren(parentId);
+    if (siblings.isEmpty) return 0;
+    return siblings
+            .map((e) => e.orderIndex)
+            .reduce((a, b) => a > b ? a : b) +
+        1;
+  }
+
+  static Future<void> addTodo(TodoModel todo) async {
+    await _todosBox.add(todo);
+  }
+
+  static Future<void> updateTodo(TodoModel todo) async {
+    if (todo.isInBox) {
+      await todo.save();
+      return;
+    }
+    final list = _todosBox.values.toList();
+    final index = list.indexWhere((t) => t.id == todo.id);
+    if (index != -1) {
+      await _todosBox.putAt(index, todo);
+    }
+  }
+
+  /// 切换完成状态。完成时记录时间。
+  static Future<void> toggleDone(String id) async {
+    final todo = getTodoById(id);
+    if (todo == null) return;
+    todo.done = !todo.done;
+    todo.doneAt = todo.done ? DateTime.now() : null;
+    await todo.save();
+  }
+
+  /// 递归收集 [id] 及其所有后代的 id
+  static List<String> collectSubtreeIds(String id) {
+    final all = _todosBox.values.toList();
+    final result = <String>[id];
+    final queue = <String>[id];
+    while (queue.isNotEmpty) {
+      final current = queue.removeLast();
+      for (final t in all) {
+        if (t.parentId == current) {
+          result.add(t.id);
+          queue.add(t.id);
+        }
+      }
+    }
+    return result;
+  }
+
+  /// 删除单个待办（不连带子树）
+  static Future<void> deleteTodo(String id) async {
+    final list = _todosBox.values.toList();
+    final index = list.indexWhere((t) => t.id == id);
+    if (index != -1) {
+      await _todosBox.deleteAt(index);
+    }
+  }
+
+  /// 删除节点及其所有后代
+  static Future<void> deleteSubtree(String id) async {
+    final ids = collectSubtreeIds(id).toSet();
+    final list = _todosBox.values.toList();
+    final keys = <dynamic>[];
+    for (var i = 0; i < list.length; i++) {
+      if (ids.contains(list[i].id)) {
+        keys.add(list[i].key);
+      }
+    }
+    await _todosBox.deleteAll(keys);
+  }
+
+  static Future<void> clearAllTodos() async {
+    await _todosBox.clear();
   }
 }
 
