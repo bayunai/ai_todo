@@ -32,10 +32,26 @@ class SettingsPage extends StatelessWidget {
                   ),
             ),
             const SizedBox(height: 16),
-            _SectionHeader(title: '通知'),
-            _SettingsCard(
+            const _SectionHeader(title: '常驻面板'),
+            const _SettingsCard(
               children: [
                 _OngoingPanelSwitch(),
+                _PanelStyleRow(),
+                _BootStartSwitch(),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const _SectionHeader(title: '到点提醒'),
+            const _SettingsCard(
+              children: [
+                _ReminderAlertModeRow(),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const _SectionHeader(title: '反馈'),
+            const _SettingsCard(
+              children: [
+                _CompleteCueSwitch(),
               ],
             ),
           ],
@@ -45,12 +61,50 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
-// ========== 常驻面板开关 ==========
+// ========== 完成反馈 ==========
 
-class _OngoingPanelSwitch extends StatelessWidget {
+class _CompleteCueSwitch extends StatelessWidget {
+  const _CompleteCueSwitch();
+
   @override
   Widget build(BuildContext context) {
-    // 关键：用 Hive 的 settings box + 监听指定 key，开关状态跨页面始终同步
+    return ValueListenableBuilder<Box>(
+      valueListenable: HiveService.listenableSettings(
+        const [NotificationService.kPrefCompleteCueEnabled],
+      ),
+      builder: (context, _, _) {
+        final enabled = NotificationService.isCompleteCueEnabled;
+        final scheme = Theme.of(context).colorScheme;
+        return SwitchListTile.adaptive(
+          value: enabled,
+          title: const Text('完成提示音'),
+          subtitle: Text(
+            '勾选完成待办时播放一次系统点击音 + 轻震动',
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+          secondary: Icon(
+            Icons.celebration_outlined,
+            color: scheme.primary,
+          ),
+          onChanged: (v) async {
+            await NotificationService.setCompleteCueEnabled(v);
+            // 给一次即时预听
+            if (v) await NotificationService.playCompleteCue();
+          },
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        );
+      },
+    );
+  }
+}
+
+// ========== 常驻面板：开关 ==========
+
+class _OngoingPanelSwitch extends StatelessWidget {
+  const _OngoingPanelSwitch();
+
+  @override
+  Widget build(BuildContext context) {
     return ValueListenableBuilder<Box>(
       valueListenable: HiveService.listenableSettings(
         const [NotificationService.kPrefOngoingPanelEnabled],
@@ -64,7 +118,7 @@ class _OngoingPanelSwitch extends StatelessWidget {
 
         return SwitchListTile.adaptive(
           value: enabled,
-          title: const Text('常驻状态栏'),
+          title: const Text('开启常驻面板'),
           subtitle: Text(
             subtitle,
             style: TextStyle(color: scheme.onSurfaceVariant),
@@ -82,6 +136,167 @@ class _OngoingPanelSwitch extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+// ========== 常驻面板：样式 ==========
+
+class _PanelStyleRow extends StatelessWidget {
+  const _PanelStyleRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Box>(
+      valueListenable: HiveService.listenableSettings(
+        const [NotificationService.kPrefPanelStyle],
+      ),
+      builder: (context, _, _) {
+        final style = NotificationService.panelStyle;
+        final enabled = NotificationService.isOngoingPanelEnabled &&
+            Platform.isAndroid;
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          enabled: enabled,
+          leading: Icon(
+            Icons.view_agenda_outlined,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          title: const Text('面板样式'),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: SegmentedButton<PanelStyleMode>(
+              segments: PanelStyleMode.values
+                  .map((m) => ButtonSegment<PanelStyleMode>(
+                        value: m,
+                        label: Text(m.label),
+                      ))
+                  .toList(),
+              selected: {style},
+              onSelectionChanged: enabled
+                  ? (set) async {
+                      if (set.isEmpty) return;
+                      await NotificationService.setPanelStyle(set.first);
+                    }
+                  : null,
+              showSelectedIcon: false,
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ========== 常驻面板：开机自启 ==========
+
+class _BootStartSwitch extends StatelessWidget {
+  const _BootStartSwitch();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Box>(
+      valueListenable: HiveService.listenableSettings(
+        const [NotificationService.kPrefBootStartEnabled],
+      ),
+      builder: (context, _, _) {
+        final enabled = NotificationService.isBootStartEnabled;
+        final scheme = Theme.of(context).colorScheme;
+        final available =
+            Platform.isAndroid && NotificationService.isOngoingPanelEnabled;
+        return SwitchListTile.adaptive(
+          value: enabled,
+          title: const Text('开机自启'),
+          subtitle: Text(
+            available
+                ? '重启设备后自动在状态栏挂上常驻面板'
+                : '仅 Android；且需先开启「常驻面板」',
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+          secondary: Icon(
+            Icons.power_settings_new,
+            color: scheme.primary,
+          ),
+          onChanged: available
+              ? (v) async {
+                  await NotificationService.setBootStartEnabled(v);
+                }
+              : null,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        );
+      },
+    );
+  }
+}
+
+// ========== 到点提醒：响铃模式 ==========
+
+class _ReminderAlertModeRow extends StatelessWidget {
+  const _ReminderAlertModeRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Box>(
+      valueListenable: HiveService.listenableSettings(
+        const [NotificationService.kPrefReminderAlertMode],
+      ),
+      builder: (context, _, _) {
+        final mode = NotificationService.reminderAlertMode;
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          leading: Icon(
+            _iconFor(mode),
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          title: const Text('响铃模式'),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: SegmentedButton<ReminderAlertMode>(
+              segments: ReminderAlertMode.values
+                  .map((m) => ButtonSegment<ReminderAlertMode>(
+                        value: m,
+                        icon: Icon(_iconFor(m)),
+                        label: Text(_shortLabel(m)),
+                      ))
+                  .toList(),
+              selected: {mode},
+              onSelectionChanged: (set) async {
+                if (set.isEmpty) return;
+                await NotificationService.setReminderAlertMode(set.first);
+              },
+              showSelectedIcon: false,
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static IconData _iconFor(ReminderAlertMode m) {
+    switch (m) {
+      case ReminderAlertMode.sound:
+        return Icons.notifications_active_outlined;
+      case ReminderAlertMode.vibrate:
+        return Icons.vibration;
+      case ReminderAlertMode.silent:
+        return Icons.notifications_off_outlined;
+    }
+  }
+
+  static String _shortLabel(ReminderAlertMode m) {
+    switch (m) {
+      case ReminderAlertMode.sound:
+        return '响铃';
+      case ReminderAlertMode.vibrate:
+        return '震动';
+      case ReminderAlertMode.silent:
+        return '静音';
+    }
   }
 }
 

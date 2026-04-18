@@ -214,6 +214,8 @@ class HiveService {
     await todo.save();
     if (todo.done) {
       await NotificationService.cancelForTodo(todo.id);
+      // 勾选完成时给一次轻触感 + 系统点击音
+      await NotificationService.playCompleteCue();
     } else {
       await NotificationService.scheduleForTodo(todo);
     }

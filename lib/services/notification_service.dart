@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -9,6 +10,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/todo_model.dart';
 import 'hive_service.dart';
+import 'native_prefs.dart';
 
 /// 后台点击回调必须是顶层或静态函数。
 /// 这里只做最轻工作：把 payload 写入进程间可共享的 stream/pending 字段。
@@ -24,10 +26,68 @@ void _onBackgroundNotificationResponse(NotificationResponse response) {
   NotificationService._dispatch(payload);
 }
 
+/// 到点提醒的响铃模式。每种模式对应一个独立的通知渠道，
+/// 因为 Android 通知渠道的 importance/声音/震动创建后不可修改，
+/// 切换模式时通过切换渠道生效。
+enum ReminderAlertMode {
+  sound(
+    id: 'todo_reminders_sound',
+    label: '铃声 + 震动',
+    persistValue: 0,
+  ),
+  vibrate(
+    id: 'todo_reminders_vibrate',
+    label: '仅震动',
+    persistValue: 1,
+  ),
+  silent(
+    id: 'todo_reminders_silent',
+    label: '静音',
+    persistValue: 2,
+  );
+
+  const ReminderAlertMode({
+    required this.id,
+    required this.label,
+    required this.persistValue,
+  });
+
+  final String id;
+  final String label;
+  final int persistValue;
+
+  static ReminderAlertMode fromPersist(int v) {
+    for (final m in ReminderAlertMode.values) {
+      if (m.persistValue == v) return m;
+    }
+    return ReminderAlertMode.sound;
+  }
+}
+
+/// 常驻面板的展示样式。
+enum PanelStyleMode {
+  compact(label: '简洁', persistValue: 0),
+  detailed(label: '详细', persistValue: 1);
+
+  const PanelStyleMode({required this.label, required this.persistValue});
+  final String label;
+  final int persistValue;
+
+  static PanelStyleMode fromPersist(int v) {
+    for (final m in PanelStyleMode.values) {
+      if (m.persistValue == v) return m;
+    }
+    return PanelStyleMode.compact;
+  }
+}
+
 class NotificationService {
   NotificationService._();
 
-  static const String _channelId = 'todo_reminders';
+  // 历史遗留渠道：保留 id 只是为了方便 deleteNotificationChannel 清理。
+  // 现在所有提醒按模式使用 [ReminderAlertMode] 里的独立渠道。
+  static const String _legacyChannelId = 'todo_reminders';
+
   static const String _channelName = '待办提醒';
   static const String _channelDesc = '到达提醒时间时弹出待办通知';
 
@@ -132,15 +192,42 @@ class NotificationService {
     final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     if (androidPlugin != null) {
+      // 响铃模式：3 条渠道分别对应 sound / vibrate / silent
       await androidPlugin.createNotificationChannel(
         const AndroidNotificationChannel(
-          _channelId,
-          _channelName,
-          description: _channelDesc,
+          'todo_reminders_sound',
+          '$_channelName · 铃声',
+          description: '$_channelDesc（铃声 + 震动）',
           importance: Importance.high,
           enableVibration: true,
+          playSound: true,
         ),
       );
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'todo_reminders_vibrate',
+          '$_channelName · 震动',
+          description: '$_channelDesc（仅震动）',
+          importance: Importance.high,
+          enableVibration: true,
+          playSound: false,
+        ),
+      );
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'todo_reminders_silent',
+          '$_channelName · 静音',
+          description: '$_channelDesc（静音）',
+          importance: Importance.low,
+          enableVibration: false,
+          playSound: false,
+        ),
+      );
+      // 清理历史渠道，避免在系统设置里出现孤儿条目
+      try {
+        await androidPlugin.deleteNotificationChannel(_legacyChannelId);
+      } catch (_) {}
+
       await androidPlugin.createNotificationChannel(
         const AndroidNotificationChannel(
           _panelChannelId,
@@ -153,6 +240,16 @@ class NotificationService {
         ),
       );
     }
+
+    // 把当前 pref 值同步到原生 SharedPreferences，供 BootReceiver 读取
+    await NativePrefs.setBool(
+      NativePrefs.kPanelEnabled,
+      isOngoingPanelEnabled,
+    );
+    await NativePrefs.setBool(
+      NativePrefs.kBootStartEnabled,
+      isBootStartEnabled,
+    );
 
     // 冷启动由通知拉起时，取 payload 缓存给 UI 消费
     final details = await _plugin.getNotificationAppLaunchDetails();
@@ -247,22 +344,31 @@ class NotificationService {
         ? AndroidScheduleMode.exactAllowWhileIdle
         : AndroidScheduleMode.alarmClock;
 
+    final mode = reminderAlertMode;
+    final androidDetails = AndroidNotificationDetails(
+      mode.id,
+      _channelName,
+      channelDescription: _channelDesc,
+      importance: mode == ReminderAlertMode.silent
+          ? Importance.low
+          : Importance.high,
+      priority: mode == ReminderAlertMode.silent
+          ? Priority.low
+          : Priority.high,
+      category: AndroidNotificationCategory.reminder,
+      playSound: mode == ReminderAlertMode.sound,
+      enableVibration: mode != ReminderAlertMode.silent,
+    );
+
     try {
       await _plugin.zonedSchedule(
         id,
         todo.title.isEmpty ? '待办提醒' : todo.title,
         body,
         scheduled,
-        const NotificationDetails(
-          android: AndroidNotificationDetails(
-            _channelId,
-            _channelName,
-            channelDescription: _channelDesc,
-            importance: Importance.high,
-            priority: Priority.high,
-            category: AndroidNotificationCategory.reminder,
-          ),
-          iOS: DarwinNotificationDetails(
+        NotificationDetails(
+          android: androidDetails,
+          iOS: const DarwinNotificationDetails(
             presentAlert: true,
             presentBadge: true,
             presentSound: true,
@@ -353,15 +459,73 @@ class NotificationService {
     }
   }
 
-  // ========= 常驻面板 =========
+  // ========= 偏好 keys =========
 
-  /// 用户偏好：常驻面板开关，默认开启
+  /// 常驻面板开关，默认开启
   static const String kPrefOngoingPanelEnabled = 'ongoing_panel_enabled';
 
-  static VoidCallback? _panelBoxListener;
+  /// 面板样式（0=简洁, 1=详细）
+  static const String kPrefPanelStyle = 'panel_style';
+
+  /// 到点提醒响铃模式（0=声音, 1=震动, 2=静音）
+  static const String kPrefReminderAlertMode = 'reminder_alert_mode';
+
+  /// 开机自启面板，默认关闭
+  static const String kPrefBootStartEnabled = 'boot_start_enabled';
+
+  /// 完成待办音效 + 触感，默认开启
+  static const String kPrefCompleteCueEnabled = 'complete_cue_enabled';
 
   static bool get isOngoingPanelEnabled =>
       HiveService.getSetting<bool>(kPrefOngoingPanelEnabled, true);
+
+  static PanelStyleMode get panelStyle => PanelStyleMode.fromPersist(
+        HiveService.getSetting<int>(
+          kPrefPanelStyle,
+          PanelStyleMode.compact.persistValue,
+        ),
+      );
+
+  static ReminderAlertMode get reminderAlertMode =>
+      ReminderAlertMode.fromPersist(
+        HiveService.getSetting<int>(
+          kPrefReminderAlertMode,
+          ReminderAlertMode.sound.persistValue,
+        ),
+      );
+
+  static bool get isBootStartEnabled =>
+      HiveService.getSetting<bool>(kPrefBootStartEnabled, false);
+
+  static bool get isCompleteCueEnabled =>
+      HiveService.getSetting<bool>(kPrefCompleteCueEnabled, true);
+
+  /// 勾选"完成待办"时播放的反馈：震动 + 短促 beep。
+  /// - Android 走原生 ToneGenerator（不受"触摸提示音"系统开关影响）
+  /// - 其它平台退回 Flutter 内建 `SystemSound.click`
+  /// 用户关闭开关后直接 no-op。
+  static Future<void> playCompleteCue() async {
+    if (!isCompleteCueEnabled) return;
+    try {
+      await HapticFeedback.mediumImpact();
+    } catch (_) {}
+    if (Platform.isAndroid) {
+      await NativePrefs.playCompleteCue();
+    } else {
+      try {
+        await SystemSound.play(SystemSoundType.click);
+      } catch (_) {}
+    }
+  }
+
+  /// 切换"完成音效"开关并持久化。
+  static Future<void> setCompleteCueEnabled(bool enabled) async {
+    await HiveService.setSetting<bool>(kPrefCompleteCueEnabled, enabled);
+  }
+
+  // ========= 常驻面板 =========
+
+  static VoidCallback? _panelBoxListener;
 
   /// 启动常驻面板：初次 show + 挂载 Hive 变更监听，
   /// 每次待办 box 变更（增删改、勾选完成等）都会刷新展示。
@@ -393,14 +557,39 @@ class NotificationService {
     } catch (_) {}
   }
 
-  /// 设置开关：持久化 + 立刻启/停面板。
+  /// 设置开关：持久化 + 立刻启/停面板 + 同步原生 SharedPreferences。
   static Future<void> setOngoingPanelEnabled(bool enabled) async {
     await HiveService.setSetting<bool>(kPrefOngoingPanelEnabled, enabled);
+    await NativePrefs.setBool(NativePrefs.kPanelEnabled, enabled);
     if (enabled) {
       await startOngoingPanel();
     } else {
       await stopOngoingPanel();
     }
+  }
+
+  /// 设置面板样式：持久化 + 立刻刷新展示。
+  static Future<void> setPanelStyle(PanelStyleMode style) async {
+    await HiveService.setSetting<int>(kPrefPanelStyle, style.persistValue);
+    if (isOngoingPanelEnabled) {
+      await refreshOngoingPanel();
+    }
+  }
+
+  /// 设置响铃模式：持久化 + 立刻重排所有待办（让 pending 通知走新渠道）。
+  static Future<void> setReminderAlertMode(ReminderAlertMode mode) async {
+    await HiveService.setSetting<int>(
+      kPrefReminderAlertMode,
+      mode.persistValue,
+    );
+    await rescheduleAllFromHive();
+  }
+
+  /// 设置开机自启：持久化 + 同步原生 SharedPreferences。
+  /// 实际效果在下一次设备重启后由 BootReceiver 生效。
+  static Future<void> setBootStartEnabled(bool enabled) async {
+    await HiveService.setSetting<bool>(kPrefBootStartEnabled, enabled);
+    await NativePrefs.setBool(NativePrefs.kBootStartEnabled, enabled);
   }
 
   /// 根据当前 Hive 中的待办实时生成面板文案并刷新。
@@ -411,14 +600,16 @@ class NotificationService {
     var total = todos.length;
     var done = 0;
     var overdue = 0;
+    final pendingList = <TodoModel>[];
     for (final t in todos) {
       if (t.done) {
         done++;
-      } else if (t.isOverdue) {
-        overdue++;
+      } else {
+        pendingList.add(t);
+        if (t.isOverdue) overdue++;
       }
     }
-    final pending = total - done;
+    final pending = pendingList.length;
 
     final title = total == 0 ? '待办' : '待办  $done / $total';
     final String body;
@@ -430,6 +621,31 @@ class NotificationService {
       body = '全部搞定 🎉';
     } else {
       body = '还有 $pending 条进行中';
+    }
+
+    // 详细样式：BigText 多行列出前 5 条未完成待办（逾期优先、然后按截止时间升序）
+    StyleInformation? style;
+    if (panelStyle == PanelStyleMode.detailed && pendingList.isNotEmpty) {
+      pendingList.sort((a, b) {
+        final ao = a.isOverdue ? 0 : 1;
+        final bo = b.isOverdue ? 0 : 1;
+        if (ao != bo) return ao - bo;
+        final ad = a.dueAt?.millisecondsSinceEpoch ?? 1 << 62;
+        final bd = b.dueAt?.millisecondsSinceEpoch ?? 1 << 62;
+        return ad.compareTo(bd);
+      });
+      final top = pendingList.take(5).map((t) {
+        final prefix = t.isOverdue ? '⚠ ' : '• ';
+        return '$prefix${t.title.isEmpty ? '(未命名)' : t.title}';
+      }).join('\n');
+      final more = pendingList.length > 5
+          ? '\n…还有 ${pendingList.length - 5} 条'
+          : '';
+      style = BigTextStyleInformation(
+        '$top$more',
+        contentTitle: title,
+        summaryText: body,
+      );
     }
 
     final details = AndroidNotificationDetails(
@@ -446,6 +662,7 @@ class NotificationService {
       showWhen: false,
       category: AndroidNotificationCategory.status,
       visibility: NotificationVisibility.public,
+      styleInformation: style,
       actions: const <AndroidNotificationAction>[
         AndroidNotificationAction(
           kPanelAddActionId,
