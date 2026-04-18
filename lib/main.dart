@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'main_page.dart';
 import 'services/display_refresh_service.dart';
 import 'services/hive_service.dart';
+import 'services/notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +14,9 @@ Future<void> main() async {
   await preferHighRefreshRateIfSupported();
 
   await HiveService.init();
+  await NotificationService.init();
+  // 兜底：升级/重装/时区变更后把 Hive 中仍需提醒的待办重新排期
+  await NotificationService.rescheduleAllFromHive();
 
   runApp(const MyApp());
 }

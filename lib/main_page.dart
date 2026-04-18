@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'calendar_page.dart';
 import 'schedule_page.dart';
+import 'services/notification_service.dart';
 import 'todo_page.dart';
 
 class MainPage extends StatefulWidget {
@@ -12,6 +15,7 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   int _currentIndex = 0;
+  StreamSubscription<String>? _notificationSub;
 
   final List<Widget> _pages = [
     const CalendarPage(),
@@ -19,6 +23,25 @@ class _MainPageState extends State<MainPage> {
     const TodoPage(),
     const PlaceholderPage(title: '设置'),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // 冷启动通过通知拉起：先切到待办 tab，payload 保留给 TodoPage 消费
+    if (NotificationService.hasPendingPayload) {
+      _currentIndex = 2;
+    }
+    _notificationSub = NotificationService.onTap.listen((_) {
+      if (!mounted) return;
+      setState(() => _currentIndex = 2);
+    });
+  }
+
+  @override
+  void dispose() {
+    _notificationSub?.cancel();
+    super.dispose();
+  }
 
   Widget _buildNavItem(int index, IconData icon, String label) {
     final isSelected = _currentIndex == index;

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 
 import 'models/todo_model.dart';
 import 'services/hive_service.dart';
+import 'services/notification_service.dart';
 
 enum TodoFilter { all, pending, done, overdue }
 
@@ -45,6 +48,42 @@ class TodoPage extends StatefulWidget {
 class _TodoPageState extends State<TodoPage> {
   TodoFilter _filter = TodoFilter.all;
   final Set<String> _expanded = <String>{};
+  StreamSubscription<String>? _notificationSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // 冷启动：从通知拉起时，首帧完成后消费 pending payload
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final pending = NotificationService.consumePendingPayload();
+      if (pending != null) _openTodoByNotification(pending);
+    });
+    _notificationSub = NotificationService.onTap.listen((payload) {
+      if (!mounted) return;
+      _openTodoByNotification(payload);
+    });
+  }
+
+  @override
+  void dispose() {
+    _notificationSub?.cancel();
+    super.dispose();
+  }
+
+  /// 收到通知点击后：展开路径上的祖先，并打开该待办的编辑弹窗
+  void _openTodoByNotification(String id) {
+    final target = HiveService.getTodoById(id);
+    if (target == null || !mounted) return;
+    setState(() {
+      var pid = target.parentId;
+      while (pid != null) {
+        _expanded.add(pid);
+        final p = HiveService.getTodoById(pid);
+        pid = p?.parentId;
+      }
+    });
+    _openEditor(edit: target);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1105,6 +1144,16 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
       );
       return;
     }
+
+    // 若设置了提醒：先申请通知/精确闹钟权限，未授予也不阻塞保存，仅提示
+    String? permWarning;
+    if (_remindAt != null) {
+      final granted = await NotificationService.ensurePermissions();
+      if (!granted) {
+        permWarning = '通知或精确闹钟权限未授予，提醒可能无法按时触发，可前往系统设置开启';
+      }
+    }
+
     final e = widget.editing;
     if (e == null) {
       final todo = TodoModel.create(
@@ -1129,6 +1178,14 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
       }
       await HiveService.updateTodo(e);
     }
-    if (mounted) Navigator.pop(context);
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    navigator.pop();
+    if (permWarning != null) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(permWarning)),
+      );
+    }
   }
 }

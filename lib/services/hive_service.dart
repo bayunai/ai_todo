@@ -3,6 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../models/event_model.dart';
 import '../models/shift_model.dart';
 import '../models/todo_model.dart';
+import 'notification_service.dart';
 
 class HiveService {
   static const String eventsBoxName = 'events';
@@ -169,27 +170,34 @@ class HiveService {
 
   static Future<void> addTodo(TodoModel todo) async {
     await _todosBox.add(todo);
+    await NotificationService.scheduleForTodo(todo);
   }
 
   static Future<void> updateTodo(TodoModel todo) async {
     if (todo.isInBox) {
       await todo.save();
-      return;
+    } else {
+      final list = _todosBox.values.toList();
+      final index = list.indexWhere((t) => t.id == todo.id);
+      if (index != -1) {
+        await _todosBox.putAt(index, todo);
+      }
     }
-    final list = _todosBox.values.toList();
-    final index = list.indexWhere((t) => t.id == todo.id);
-    if (index != -1) {
-      await _todosBox.putAt(index, todo);
-    }
+    await NotificationService.scheduleForTodo(todo);
   }
 
-  /// 切换完成状态。完成时记录时间。
+  /// 切换完成状态。完成时记录时间，并取消通知；取消完成后重新排期。
   static Future<void> toggleDone(String id) async {
     final todo = getTodoById(id);
     if (todo == null) return;
     todo.done = !todo.done;
     todo.doneAt = todo.done ? DateTime.now() : null;
     await todo.save();
+    if (todo.done) {
+      await NotificationService.cancelForTodo(todo.id);
+    } else {
+      await NotificationService.scheduleForTodo(todo);
+    }
   }
 
   /// 递归收集 [id] 及其所有后代的 id
@@ -215,6 +223,7 @@ class HiveService {
     final index = list.indexWhere((t) => t.id == id);
     if (index != -1) {
       await _todosBox.deleteAt(index);
+      await NotificationService.cancelForTodo(id);
     }
   }
 
@@ -229,6 +238,9 @@ class HiveService {
       }
     }
     await _todosBox.deleteAll(keys);
+    for (final tid in ids) {
+      await NotificationService.cancelForTodo(tid);
+    }
   }
 
   static Future<void> clearAllTodos() async {
