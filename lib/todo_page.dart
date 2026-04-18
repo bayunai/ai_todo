@@ -178,10 +178,9 @@ class _TodoPageState extends State<TodoPage> {
         padding: EdgeInsets.only(
           bottom: MediaQuery.viewPaddingOf(context).bottom + 70,
         ),
-        child: FloatingActionButton.extended(
+        child: FloatingActionButton(
           onPressed: () => showTodoEditor(context),
-          icon: const Icon(Icons.add),
-          label: const Text('添加待办'),
+          child: const Icon(Icons.add),
         ),
       ),
     );
@@ -306,7 +305,7 @@ class _TodoPageState extends State<TodoPage> {
         icon = Icons.beach_access_outlined;
         break;
       case TodoFilter.all:
-        text = '还没有待办，点右下角 “添加待办” 创建一条';
+        text = '还没有待办，点右下角「+」创建一条';
         icon = Icons.checklist_rtl_outlined;
         break;
     }

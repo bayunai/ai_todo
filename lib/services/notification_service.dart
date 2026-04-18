@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -35,8 +36,10 @@ enum ReminderAlertMode {
     label: '铃声 + 震动',
     persistValue: 0,
   ),
+  /// 与 [sound] 共用 `todo_reminders_sound` 渠道：MIUI/HyperOS 对独立「仅震动」渠道
+  /// 常错误地把系统「震动」登记为关；共用已正确登记的渠道，靠 [scheduleForTodo] 里 `playSound: false` 静音。
   vibrate(
-    id: 'todo_reminders_vibrate',
+    id: 'todo_reminders_sound',
     label: '仅震动',
     persistValue: 1,
   ),
@@ -84,10 +87,13 @@ enum PanelStyleMode {
 class NotificationService {
   NotificationService._();
 
-  // 历史遗留渠道：保留 id 只是为了方便 deleteNotificationChannel 清理。
-  // 现在所有提醒按模式使用 [ReminderAlertMode] 里的独立渠道。
-  static const String _legacyChannelId = 'todo_reminders';
+  /// 与原生 `MainActivity.ensureChannels` 中 pattern 一致；必须非空。
+  /// 插件在 pattern 为空时不会调用 NotificationCompat.Builder.setVibrate，部分 ROM 上会导致「仅震动」不生效。
+  static final Int64List _reminderVibrationPattern =
+      Int64List.fromList([0, 280, 200, 280, 200, 280]);
 
+  // 提醒渠道的人类可读名/描述：AndroidNotificationDetails 里作为 fallback 传入；
+  // 实际 id 与属性均由原生侧 `NativePrefs.ensureChannels()` 预建。
   static const String _channelName = '待办提醒';
   static const String _channelDesc = '到达提醒时间时弹出待办通知';
 
@@ -188,58 +194,11 @@ class NotificationService {
           _onBackgroundNotificationResponse,
     );
 
-    // 确保 Android 通知渠道存在
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    if (androidPlugin != null) {
-      // 响铃模式：3 条渠道分别对应 sound / vibrate / silent
-      await androidPlugin.createNotificationChannel(
-        const AndroidNotificationChannel(
-          'todo_reminders_sound',
-          '$_channelName · 铃声',
-          description: '$_channelDesc（铃声 + 震动）',
-          importance: Importance.high,
-          enableVibration: true,
-          playSound: true,
-        ),
-      );
-      await androidPlugin.createNotificationChannel(
-        const AndroidNotificationChannel(
-          'todo_reminders_vibrate',
-          '$_channelName · 震动',
-          description: '$_channelDesc（仅震动）',
-          importance: Importance.high,
-          enableVibration: true,
-          playSound: false,
-        ),
-      );
-      await androidPlugin.createNotificationChannel(
-        const AndroidNotificationChannel(
-          'todo_reminders_silent',
-          '$_channelName · 静音',
-          description: '$_channelDesc（静音）',
-          importance: Importance.low,
-          enableVibration: false,
-          playSound: false,
-        ),
-      );
-      // 清理历史渠道，避免在系统设置里出现孤儿条目
-      try {
-        await androidPlugin.deleteNotificationChannel(_legacyChannelId);
-      } catch (_) {}
-
-      await androidPlugin.createNotificationChannel(
-        const AndroidNotificationChannel(
-          _panelChannelId,
-          _panelChannelName,
-          description: _panelChannelDesc,
-          importance: Importance.low,
-          playSound: false,
-          enableVibration: false,
-          showBadge: false,
-        ),
-      );
-    }
+    // 通知渠道走原生注册：显式设置 vibrationPattern / lockscreenVisibility /
+    // 默认通知音 URI 等 flutter_local_notifications 未暴露的属性，
+    // 规避 MIUI / HyperOS 对新渠道默认降级（震动关、锁屏隐藏、悬浮关）。
+    // 仅 Android 生效；iOS/macOS 走 Darwin initialization。
+    await NativePrefs.ensureChannels();
 
     // 把当前 pref 值同步到原生 SharedPreferences，供 BootReceiver 读取
     await NativePrefs.setBool(
@@ -358,6 +317,9 @@ class NotificationService {
       category: AndroidNotificationCategory.reminder,
       playSound: mode == ReminderAlertMode.sound,
       enableVibration: mode != ReminderAlertMode.silent,
+      vibrationPattern: mode == ReminderAlertMode.silent
+          ? null
+          : _reminderVibrationPattern,
     );
 
     try {

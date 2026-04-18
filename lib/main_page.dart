@@ -1,9 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+
 import 'calendar_page.dart';
 import 'schedule_page.dart';
 import 'services/notification_service.dart';
+import 'services/tab_prefs.dart';
 import 'settings_page.dart';
 import 'timeline_page.dart';
 import 'todo_page.dart';
@@ -16,34 +19,23 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> {
-  int _currentIndex = 0;
+  /// 当前选中 Tab 的枚举值；用枚举而不是下标，开关关闭后重建时仍能对得上。
+  /// `null` 表示设置 Tab（它不进 [AppTab]）。
+  AppTab? _currentTab = AppTab.timeline;
+  bool _onSettings = false;
+
   StreamSubscription<String>? _notificationSub;
-
-  /// 底部导航对应的 Tab 索引常量，避免硬编码数字满处飞。
-  static const int _kTimelineIndex = 0;
-  static const int _kCalendarIndex = 1;
-  static const int _kScheduleIndex = 2;
-  static const int _kTodoIndex = 3;
-  static const int _kSettingsIndex = 4;
-
-  final List<Widget> _pages = [
-    const TimelinePage(),
-    const CalendarPage(),
-    const SchedulePage(),
-    const TodoPage(),
-    const SettingsPage(),
-  ];
 
   @override
   void initState() {
     super.initState();
     // 冷启动通过通知拉起：先切到待办 tab，payload 保留给 TodoPage 消费
     if (NotificationService.hasPendingPayload) {
-      _currentIndex = _kTodoIndex;
+      _selectTab(AppTab.todo, silent: true);
     }
     _notificationSub = NotificationService.onTap.listen((_) {
       if (!mounted) return;
-      setState(() => _currentIndex = _kTodoIndex);
+      setState(() => _selectTab(AppTab.todo, silent: true));
     });
   }
 
@@ -53,22 +45,54 @@ class _MainPageState extends State<MainPage> {
     super.dispose();
   }
 
-  Widget _buildNavItem(int index, IconData icon, String label) {
-    final isSelected = _currentIndex == index;
+  /// 设定当前 Tab；若传入的 Tab 被禁用则退到首个可用 Tab（或设置页）。
+  void _selectTab(AppTab? tab, {bool silent = false}) {
+    if (tab == null) {
+      _currentTab = null;
+      _onSettings = true;
+    } else if (TabPrefs.isEnabled(tab)) {
+      _currentTab = tab;
+      _onSettings = false;
+    } else {
+      final enabled = TabPrefs.enabledTabs();
+      if (enabled.isEmpty) {
+        _currentTab = null;
+        _onSettings = true;
+      } else {
+        _currentTab = enabled.first;
+        _onSettings = false;
+      }
+    }
+    if (!silent && mounted) setState(() {});
+  }
+
+  Widget _buildPage(AppTab tab) {
+    switch (tab) {
+      case AppTab.timeline:
+        return const TimelinePage();
+      case AppTab.calendar:
+        return const CalendarPage();
+      case AppTab.schedule:
+        return const SchedulePage();
+      case AppTab.todo:
+        return const TodoPage();
+    }
+  }
+
+  Widget _buildNavItem({
+    required bool isSelected,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
     return Expanded(
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            if (index >= 0 && index < _pages.length) {
-              setState(() {
-                _currentIndex = index;
-              });
-            }
-          },
+          onTap: onTap,
           child: Container(
             height: double.infinity,
-            padding: const EdgeInsets.only(top: 5), // 向上移动3像素（从10改为7）
+            padding: const EdgeInsets.only(top: 5),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -97,70 +121,99 @@ class _MainPageState extends State<MainPage> {
 
   @override
   Widget build(BuildContext context) {
-    // 确保索引在有效范围内
-    final safeIndex = _pages.isEmpty 
-        ? null 
-        : _currentIndex.clamp(0, _pages.length - 1);
-    
-    return Scaffold(
-      body: _pages.isEmpty
-          ? const Center(child: Text('没有可用的页面'))
-          : IndexedStack(
-              index: safeIndex,
-              children: _pages,
+    return ValueListenableBuilder<Box>(
+      valueListenable: TabPrefs.listenable(),
+      builder: (context, _, _) {
+        final enabledTabs = TabPrefs.enabledTabs();
+
+        // 若当前选中的 Tab 被关了，退到首个启用 Tab
+        if (!_onSettings &&
+            _currentTab != null &&
+            !enabledTabs.contains(_currentTab)) {
+          _currentTab = enabledTabs.isEmpty ? null : enabledTabs.first;
+          _onSettings = _currentTab == null;
+        }
+
+        // IndexedStack 只保留"启用的"页面 + 设置页
+        final stackChildren = <Widget>[
+          for (final t in enabledTabs) _buildPage(t),
+          const SettingsPage(),
+        ];
+        final stackIndex = _onSettings
+            ? stackChildren.length - 1
+            : (_currentTab == null
+                ? 0
+                : enabledTabs.indexOf(_currentTab!).clamp(
+                      0,
+                      stackChildren.length - 1,
+                    ));
+
+        return Scaffold(
+          body: IndexedStack(
+            index: stackIndex,
+            children: stackChildren,
+          ),
+          bottomNavigationBar: Container(
+            margin: EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              13 + MediaQuery.viewPaddingOf(context).bottom,
             ),
-      bottomNavigationBar: Container(
-        margin: EdgeInsets.fromLTRB(
-          16,
-          0,
-          16,
-          13 + MediaQuery.viewPaddingOf(context).bottom,
-        ),
-        decoration: BoxDecoration(
-          color: Theme.of(context).bottomNavigationBarTheme.backgroundColor ??
-              Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: Container(
             decoration: BoxDecoration(
-              border: Border.all(
-                color: Colors.grey[300]!,
-                width: 1,
-              ),
+              color:
+                  Theme.of(context).bottomNavigationBarTheme.backgroundColor ??
+                      Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.1),
+                  blurRadius: 10,
+                  offset: const Offset(0, -2),
+                ),
+              ],
             ),
-            child: SizedBox(
-              height: 65, // 调整到65
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildNavItem(
-                      _kTimelineIndex, Icons.view_timeline_outlined, '时间线'),
-                  _buildNavItem(
-                      _kCalendarIndex, Icons.calendar_today, '日历'),
-                  _buildNavItem(_kScheduleIndex, Icons.schedule, '班表'),
-                  _buildNavItem(_kTodoIndex, Icons.checklist, '待办'),
-                  _buildNavItem(_kSettingsIndex, Icons.settings, '设置'),
-                ],
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: Colors.grey[300]!,
+                    width: 1,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: SizedBox(
+                  height: 65,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      for (final t in enabledTabs)
+                        _buildNavItem(
+                          isSelected: !_onSettings && _currentTab == t,
+                          icon: t.icon,
+                          label: t.label,
+                          onTap: () => _selectTab(t),
+                        ),
+                      _buildNavItem(
+                        isSelected: _onSettings,
+                        icon: Icons.settings,
+                        label: '设置',
+                        onTap: () => _selectTab(null),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
-// 占位页面，用于其他标签
+/// 占位页面，保留作历史兼容。
 class PlaceholderPage extends StatelessWidget {
   final String title;
 
@@ -196,4 +249,3 @@ class PlaceholderPage extends StatelessWidget {
     );
   }
 }
-

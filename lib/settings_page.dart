@@ -5,6 +5,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'services/hive_service.dart';
 import 'services/notification_service.dart';
+import 'services/tab_prefs.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -30,6 +31,10 @@ class SettingsPage extends StatelessWidget {
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
+            ),
+            const _SectionHeader(title: '外观'),
+            const _SettingsCard(
+              children: [_TabVisibilityEntry()],
             ),
             const SizedBox(height: 16),
             const _SectionHeader(title: '常驻面板'),
@@ -297,6 +302,129 @@ class _ReminderAlertModeRow extends StatelessWidget {
       case ReminderAlertMode.silent:
         return '静音';
     }
+  }
+}
+
+// ========== 标签页可见性：入口 ==========
+
+class _TabVisibilityEntry extends StatelessWidget {
+  const _TabVisibilityEntry();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<Box>(
+      valueListenable: TabPrefs.listenable(),
+      builder: (context, _, _) {
+        final enabled = TabPrefs.enabledTabs();
+        final summary = enabled.isEmpty
+            ? '仅显示「设置」'
+            : enabled.map((t) => t.label).join(' · ');
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          leading: Icon(Icons.tab_outlined, color: scheme.primary),
+          title: const Text('标签页'),
+          subtitle: Text(
+            summary,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+          trailing: const Icon(Icons.chevron_right, size: 20),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const TabVisibilityPage(),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+/// 二级页：标签页显示偏好
+class TabVisibilityPage extends StatelessWidget {
+  const TabVisibilityPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      backgroundColor: scheme.surface,
+      appBar: AppBar(
+        title: const Text('标签页'),
+        centerTitle: true,
+      ),
+      body: SafeArea(
+        child: ValueListenableBuilder<Box>(
+          valueListenable: TabPrefs.listenable(),
+          builder: (context, _, _) {
+            final enabledCount = TabPrefs.enabledTabs().length;
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
+                  child: Text(
+                    '选择底部导航要显示的标签；「设置」始终保留。',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  ),
+                ),
+                _SettingsCard(
+                  children: [
+                    for (int i = 0; i < AppTab.values.length; i++) ...[
+                      _TabSwitchTile(
+                        tab: AppTab.values[i],
+                        enabledCount: enabledCount,
+                      ),
+                      if (i < AppTab.values.length - 1)
+                        Divider(
+                          height: 1,
+                          indent: 56,
+                          color: scheme.outlineVariant.withValues(alpha: 0.5),
+                        ),
+                    ],
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _TabSwitchTile extends StatelessWidget {
+  const _TabSwitchTile({required this.tab, required this.enabledCount});
+
+  final AppTab tab;
+  final int enabledCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isOn = TabPrefs.isEnabled(tab);
+    final isLastOn = isOn && enabledCount <= 1;
+    return SwitchListTile.adaptive(
+      value: isOn,
+      title: Text(tab.label),
+      subtitle: Text(
+        isLastOn ? '至少保留一个标签页' : '在底部导航中显示 ${tab.label}',
+        style: TextStyle(color: scheme.onSurfaceVariant),
+      ),
+      secondary: Icon(tab.icon, color: scheme.primary),
+      onChanged: isLastOn
+          ? null
+          : (v) async {
+              await TabPrefs.setEnabled(tab, v);
+            },
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+    );
   }
 }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../models/todo_model.dart';
 import '../services/hive_service.dart';
@@ -34,10 +35,99 @@ Future<void> showTodoQuickActions(
             children: [
               Text(
                 todo.title.isEmpty ? '未命名任务' : todo.title,
-                style: Theme.of(ctx).textTheme.titleMedium,
+                style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 14),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.notes_outlined,
+                            size: 18,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '备注',
+                                  style: Theme.of(ctx).textTheme.labelSmall?.copyWith(
+                                        color: scheme.onSurfaceVariant,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  todo.note.trim().isEmpty
+                                      ? '无'
+                                      : todo.note.trim(),
+                                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                                        color: todo.note.trim().isEmpty
+                                            ? scheme.onSurfaceVariant
+                                            : scheme.onSurface,
+                                      ),
+                                  maxLines: 4,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.schedule_outlined,
+                            size: 18,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '提醒时间',
+                                  style: Theme.of(ctx).textTheme.labelSmall?.copyWith(
+                                        color: scheme.onSurfaceVariant,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _formatQuickActionRemind(todo),
+                                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                                        color: scheme.onSurface,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
               Row(
@@ -90,6 +180,22 @@ Future<void> showTodoQuickActions(
       );
     },
   );
+}
+
+String _formatQuickActionRemind(TodoModel t) {
+  final r = t.remindAt;
+  if (r == null) return '未设置';
+  final repeat = t.remindRepeatRule != TodoRepeat.none
+      ? ' · ${TodoRepeat.label(t.remindRepeatRule)}'
+      : '';
+  if (t.remindIsAllDay) {
+    return '${DateFormat('yyyy年M月d日').format(r)} 全天$repeat';
+  }
+  final now = DateTime.now();
+  final dateStr = r.year != now.year
+      ? DateFormat('yyyy/M/d').format(r)
+      : DateFormat('M月d日').format(r);
+  return '$dateStr ${DateFormat('HH:mm').format(r)}$repeat';
 }
 
 class _QuickActionButton extends StatelessWidget {

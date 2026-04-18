@@ -91,6 +91,14 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
     final scheme = Theme.of(context).colorScheme;
     final theme = Theme.of(context);
 
+    final media = MediaQuery.of(context);
+    // 小屏 / 横屏 / 系统导航条会挤占高度；不限制则 Column 底部溢出
+    final maxH = (media.size.height -
+            media.padding.vertical -
+            media.viewInsets.bottom -
+            32)
+        .clamp(240.0, media.size.height * 0.92);
+
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(
@@ -98,28 +106,33 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
       ),
       clipBehavior: Clip.antiAlias,
       child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildHeader(context, scheme),
-              const SizedBox(height: 8),
-              _buildTabs(scheme),
-              const SizedBox(height: 12),
-              _buildMonthSwitcher(context, scheme),
-              const SizedBox(height: 8),
-              _buildWeekdayHeader(theme, scheme),
-              const SizedBox(height: 4),
-              _buildMonthGrid(context, scheme),
-              const SizedBox(height: 8),
-              if (_mode != TodoPickerMode.allDay) ...[
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxH, maxWidth: 420),
+          child: SingleChildScrollView(
+            physics: const ClampingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildHeader(context, scheme),
+                const SizedBox(height: 8),
+                _buildTabs(scheme),
+                const SizedBox(height: 12),
+                _buildMonthSwitcher(context, scheme),
+                const SizedBox(height: 8),
+                _buildWeekdayHeader(theme, scheme),
+                const SizedBox(height: 4),
+                _buildMonthGrid(context, scheme),
+                const SizedBox(height: 8),
+                if (_mode != TodoPickerMode.allDay) ...[
+                  const Divider(height: 1),
+                  _buildTimeRow(context, scheme),
+                ],
                 const Divider(height: 1),
-                _buildTimeRow(context, scheme),
+                _buildRepeatRow(context, scheme),
               ],
-              const Divider(height: 1),
-              _buildRepeatRow(context, scheme),
-            ],
+            ),
           ),
         ),
       ),
@@ -509,20 +522,23 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
     final result = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: TodoRepeat.values.map((r) {
-              return ListTile(
-                title: Text(TodoRepeat.label(r)),
-                trailing: r == _repeatRule
-                    ? Icon(Icons.check,
-                        color: Theme.of(ctx).colorScheme.primary)
-                    : null,
-                onTap: () => Navigator.pop(ctx, r),
-              );
-            }).toList(),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: TodoRepeat.values.map((r) {
+                return ListTile(
+                  title: Text(TodoRepeat.label(r)),
+                  trailing: r == _repeatRule
+                      ? Icon(Icons.check,
+                          color: Theme.of(ctx).colorScheme.primary)
+                      : null,
+                  onTap: () => Navigator.pop(ctx, r),
+                );
+              }).toList(),
+            ),
           ),
         );
       },

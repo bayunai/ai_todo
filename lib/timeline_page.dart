@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
@@ -13,8 +15,37 @@ import 'widgets/todo_quick_actions.dart';
 /// - 顶部：已逾期（remindAt 已过且未完成）
 /// - 中部：按日期分组（今天 / 明天 / 其它日期）
 /// - 末尾：以后（未设提醒时间的收纳分组）
-class TimelinePage extends StatelessWidget {
+class TimelinePage extends StatefulWidget {
   const TimelinePage({super.key});
+
+  @override
+  State<TimelinePage> createState() => _TimelinePageState();
+}
+
+class _TimelinePageState extends State<TimelinePage> with WidgetsBindingObserver {
+  Timer? _clockTick;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // 分组依赖 DateTime.now()；Hive 不会在「时间走过」时通知，需定时刷新（逾期 / 今天 等）。
+    _clockTick = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _clockTick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,7 +60,7 @@ class TimelinePage extends StatelessWidget {
           valueListenable: HiveService.listenableTodos(),
           builder: (context, box, _) {
             final all = box.values.where((t) => !t.done).toList();
-            final sections = _buildSections(all);
+            final sections = _buildTimelineSections(all);
 
             return Column(
               children: [
@@ -49,7 +80,7 @@ class TimelinePage extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              _subtitle(sections),
+                              _timelinePageSubtitle(sections),
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: scheme.onSurfaceVariant,
                               ),
@@ -62,7 +93,7 @@ class TimelinePage extends StatelessWidget {
                 ),
                 Expanded(
                   child: sections.every((s) => s.items.isEmpty)
-                      ? _buildEmpty(context, scheme)
+                      ? _buildTimelineEmpty(context, scheme)
                       : ListView.builder(
                           padding: EdgeInsets.fromLTRB(
                             12,
@@ -87,153 +118,151 @@ class TimelinePage extends StatelessWidget {
         padding: EdgeInsets.only(
           bottom: MediaQuery.viewPaddingOf(context).bottom + 70,
         ),
-        child: FloatingActionButton.extended(
+        child: FloatingActionButton(
           onPressed: () => showTodoEditor(
             context,
             defaultRemindAt: DateTime.now().add(const Duration(hours: 1)),
           ),
-          icon: const Icon(Icons.add),
-          label: const Text('新建提醒'),
+          child: const Icon(Icons.add),
         ),
       ),
     );
   }
+}
 
-  String _subtitle(List<_Section> sections) {
-    int overdue = 0;
-    int today = 0;
-    int upcoming = 0;
-    for (final s in sections) {
-      switch (s.kind) {
-        case _SectionKind.overdue:
-          overdue = s.items.length;
-          break;
-        case _SectionKind.today:
-          today = s.items.length;
-          break;
-        case _SectionKind.date:
-        case _SectionKind.later:
-          upcoming += s.items.length;
-          break;
-      }
+String _timelinePageSubtitle(List<_Section> sections) {
+  int overdue = 0;
+  int today = 0;
+  int upcoming = 0;
+  for (final s in sections) {
+    switch (s.kind) {
+      case _SectionKind.overdue:
+        overdue = s.items.length;
+        break;
+      case _SectionKind.today:
+        today = s.items.length;
+        break;
+      case _SectionKind.date:
+      case _SectionKind.later:
+        upcoming += s.items.length;
+        break;
     }
-    final parts = <String>[];
-    if (overdue > 0) parts.add('逾期 $overdue');
-    parts.add('今天 $today');
-    if (upcoming > 0) parts.add('后续 $upcoming');
-    return parts.join(' · ');
   }
+  final parts = <String>[];
+  if (overdue > 0) parts.add('逾期 $overdue');
+  parts.add('今天 $today');
+  if (upcoming > 0) parts.add('后续 $upcoming');
+  return parts.join(' · ');
+}
 
-  Widget _buildEmpty(BuildContext context, ColorScheme scheme) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.timelapse_outlined, size: 56, color: scheme.outline),
-          const SizedBox(height: 12),
-          Text(
-            '暂无待办',
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '点右下角「新建提醒」或到「待办」页添加',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 将待办切成若干分组。已完成待办不进入时间线。
-  List<_Section> _buildSections(List<TodoModel> todos) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final tomorrow = today.add(const Duration(days: 1));
-
-    final overdue = <_TimelineItem>[];
-    final todayItems = <_TimelineItem>[];
-    final dateBuckets = <DateTime, List<_TimelineItem>>{};
-    final later = <_TimelineItem>[];
-
-    for (final t in todos) {
-      final r = t.remindAt;
-      if (r == null) {
-        later.add(_TimelineItem(todo: t, occursAt: null));
-        continue;
-      }
-      if (r.isBefore(now)) {
-        overdue.add(_TimelineItem(todo: t, occursAt: r));
-        continue;
-      }
-      final day = DateTime(r.year, r.month, r.day);
-      if (day.isAtSameMomentAs(today)) {
-        todayItems.add(_TimelineItem(todo: t, occursAt: r));
-      } else {
-        dateBuckets.putIfAbsent(day, () => []).add(
-              _TimelineItem(todo: t, occursAt: r),
-            );
-      }
-    }
-
-    int compareByTime(_TimelineItem a, _TimelineItem b) {
-      final ao = a.occursAt;
-      final bo = b.occursAt;
-      if (ao == null && bo == null) return 0;
-      if (ao == null) return 1;
-      if (bo == null) return -1;
-      return ao.compareTo(bo);
-    }
-
-    overdue.sort(compareByTime);
-    todayItems.sort(compareByTime);
-    for (final v in dateBuckets.values) {
-      v.sort(compareByTime);
-    }
-
-    final sortedDays = dateBuckets.keys.toList()..sort();
-
-    final sections = <_Section>[
-      _Section(
-        kind: _SectionKind.overdue,
-        title: '已逾期',
-        subtitle: overdue.isEmpty ? null : '点击处理',
-        items: overdue,
-      ),
-      _Section(
-        kind: _SectionKind.today,
-        title: '今天',
-        subtitle: _formatDayCn(today),
-        items: todayItems,
-      ),
-      for (final d in sortedDays)
-        _Section(
-          kind: _SectionKind.date,
-          title: d.isAtSameMomentAs(tomorrow) ? '明天' : _formatDayCn(d),
-          subtitle: d.isAtSameMomentAs(tomorrow)
-              ? DateFormat('M月d日').format(d)
-              : null,
-          items: dateBuckets[d]!,
+Widget _buildTimelineEmpty(BuildContext context, ColorScheme scheme) {
+  return Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.timelapse_outlined, size: 56, color: scheme.outline),
+        const SizedBox(height: 12),
+        Text(
+          '暂无待办',
+          style: Theme.of(context)
+              .textTheme
+              .bodyMedium
+              ?.copyWith(color: scheme.onSurfaceVariant),
         ),
-      _Section(
-        kind: _SectionKind.later,
-        title: '以后',
-        subtitle: later.isEmpty ? null : '未设提醒时间',
-        items: later,
-      ),
-    ];
+        const SizedBox(height: 4),
+        Text(
+          '点右下角「新建提醒」或到「待办」页添加',
+          style: Theme.of(context)
+              .textTheme
+              .bodySmall
+              ?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+      ],
+    ),
+  );
+}
 
-    // 空的分组不丢弃：「今天」始终保留作为参照；其它空分组过滤掉
-    return sections
-        .where((s) => s.kind == _SectionKind.today || s.items.isNotEmpty)
-        .toList();
+/// 将待办切成若干分组。已完成待办不进入时间线。
+List<_Section> _buildTimelineSections(List<TodoModel> todos) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final tomorrow = today.add(const Duration(days: 1));
+
+  final overdue = <_TimelineItem>[];
+  final todayItems = <_TimelineItem>[];
+  final dateBuckets = <DateTime, List<_TimelineItem>>{};
+  final later = <_TimelineItem>[];
+
+  for (final t in todos) {
+    final r = t.remindAt;
+    if (r == null) {
+      later.add(_TimelineItem(todo: t, occursAt: null));
+      continue;
+    }
+    if (r.isBefore(now)) {
+      overdue.add(_TimelineItem(todo: t, occursAt: r));
+      continue;
+    }
+    final day = DateTime(r.year, r.month, r.day);
+    if (day.isAtSameMomentAs(today)) {
+      todayItems.add(_TimelineItem(todo: t, occursAt: r));
+    } else {
+      dateBuckets.putIfAbsent(day, () => []).add(
+            _TimelineItem(todo: t, occursAt: r),
+          );
+    }
   }
+
+  int compareByTime(_TimelineItem a, _TimelineItem b) {
+    final ao = a.occursAt;
+    final bo = b.occursAt;
+    if (ao == null && bo == null) return 0;
+    if (ao == null) return 1;
+    if (bo == null) return -1;
+    return ao.compareTo(bo);
+  }
+
+  overdue.sort(compareByTime);
+  todayItems.sort(compareByTime);
+  for (final v in dateBuckets.values) {
+    v.sort(compareByTime);
+  }
+
+  final sortedDays = dateBuckets.keys.toList()..sort();
+
+  final sections = <_Section>[
+    _Section(
+      kind: _SectionKind.overdue,
+      title: '已逾期',
+      subtitle: overdue.isEmpty ? null : '点击处理',
+      items: overdue,
+    ),
+    _Section(
+      kind: _SectionKind.today,
+      title: '今天',
+      subtitle: _formatDayCn(today),
+      items: todayItems,
+    ),
+    for (final d in sortedDays)
+      _Section(
+        kind: _SectionKind.date,
+        title: d.isAtSameMomentAs(tomorrow) ? '明天' : _formatDayCn(d),
+        subtitle: d.isAtSameMomentAs(tomorrow)
+            ? DateFormat('M月d日').format(d)
+            : null,
+        items: dateBuckets[d]!,
+      ),
+    _Section(
+      kind: _SectionKind.later,
+      title: '以后',
+      subtitle: later.isEmpty ? null : '未设提醒时间',
+      items: later,
+    ),
+  ];
+
+  return sections
+      .where((s) => s.kind == _SectionKind.today || s.items.isNotEmpty)
+      .toList();
 }
 
 enum _SectionKind { overdue, today, date, later }
@@ -364,6 +393,9 @@ class _SectionBlock extends StatelessWidget {
   }
 }
 
+/// 与右侧卡片首行（外层 top 4 + 内边距 8 + 勾选框 top 2 + 半高 14）对齐的节点纵坐标。
+const double _kTimelineNodeCenterY = 28;
+
 class _TimelineRow extends StatelessWidget {
   const _TimelineRow({
     required this.item,
@@ -401,6 +433,7 @@ class _TimelineRow extends StatelessWidget {
               lineColor: scheme.outlineVariant,
               isFirst: isFirst,
               isLast: isLast,
+              nodeCenterY: _kTimelineNodeCenterY,
             ),
           ),
           Expanded(
@@ -429,6 +462,7 @@ class _TimeRail extends StatelessWidget {
     required this.lineColor,
     required this.isFirst,
     required this.isLast,
+    required this.nodeCenterY,
   });
 
   final DateTime? time;
@@ -437,6 +471,7 @@ class _TimeRail extends StatelessWidget {
   final Color lineColor;
   final bool isFirst;
   final bool isLast;
+  final double nodeCenterY;
 
   @override
   Widget build(BuildContext context) {
@@ -445,32 +480,32 @@ class _TimeRail extends StatelessWidget {
         : isAllDay
             ? '全天'
             : DateFormat('HH:mm').format(time!);
+    final textStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          fontFeatures: const [FontFeature.tabularFigures()],
+          height: 1.2,
+        );
 
-    return CustomPaint(
-      painter: _RailPainter(
-        color: lineColor,
-        isFirst: isFirst,
-        isLast: isLast,
-        nodeColor: nodeColor,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.only(top: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(right: 18),
-              child: Text(
-                label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-              ),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(
+          child: CustomPaint(
+            painter: _RailPainter(
+              color: lineColor,
+              isFirst: isFirst,
+              isLast: isLast,
+              nodeColor: nodeColor,
+              nodeCenterY: nodeCenterY,
             ),
-          ],
+          ),
         ),
-      ),
+        Positioned(
+          top: (nodeCenterY - 8).clamp(0.0, double.infinity),
+          right: 18,
+          child: Text(label, style: textStyle),
+        ),
+      ],
     );
   }
 }
@@ -481,12 +516,14 @@ class _RailPainter extends CustomPainter {
     required this.nodeColor,
     required this.isFirst,
     required this.isLast,
+    required this.nodeCenterY,
   });
 
   final Color color;
   final Color nodeColor;
   final bool isFirst;
   final bool isLast;
+  final double nodeCenterY;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -497,9 +534,13 @@ class _RailPainter extends CustomPainter {
       ..strokeWidth = 1.2
       ..style = PaintingStyle.stroke;
 
-    // 节点半径
+    // 节点半径；纵坐标与右侧卡片首行勾选框中心对齐（行极高时再夹紧避免越界）
     const r = 5.0;
-    final centerY = 16.0;
+    final minY = r + 1;
+    final maxY = size.height - r - 1;
+    final centerY = maxY >= minY
+        ? nodeCenterY.clamp(minY, maxY)
+        : size.height * 0.5;
 
     // 画虚线：节点上方（若非首行）+ 节点下方（若非末行）
     void dashLine(double y1, double y2) {
@@ -535,7 +576,8 @@ class _RailPainter extends CustomPainter {
       oldDelegate.color != color ||
       oldDelegate.nodeColor != nodeColor ||
       oldDelegate.isFirst != isFirst ||
-      oldDelegate.isLast != isLast;
+      oldDelegate.isLast != isLast ||
+      oldDelegate.nodeCenterY != nodeCenterY;
 }
 
 class _TimelineCard extends StatelessWidget {

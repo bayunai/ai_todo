@@ -36,4 +36,16 @@ class NativePrefs {
       // 渠道异常时静默
     }
   }
+
+  /// 原生注册 / 刷新通知渠道。相较 flutter_local_notifications：
+  /// 会显式设置 vibrationPattern、lockscreenVisibility、默认通知音 URI，
+  /// 规避 MIUI 等 ROM 对新渠道默认降级的坑。仅 Android 有效。
+  static Future<void> ensureChannels() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('ensureChannels');
+    } catch (_) {
+      // 渠道异常时静默
+    }
+  }
 }
