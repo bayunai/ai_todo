@@ -44,7 +44,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   Timer? _hiveDebounce;
 
-  final DateFormat _monthFormat = DateFormat('M月', 'zh_CN');
+  final DateFormat _monthFormat = DateFormat('y年M月', 'zh_CN');
   final DateFormat _weekFormat = DateFormat('M月 第W周', 'zh_CN');
   final DateFormat _dayFormat = DateFormat('MM/dd EEEE', 'zh_CN');
 
@@ -306,8 +306,10 @@ class _CalendarPageState extends State<CalendarPage> {
               itemCount: _monthPageCount,
               clipBehavior: Clip.hardEdge,
               onPageChanged: _onMonthPageChanged,
-              // BouncingScrollPhysics 在页面对齐结束时常有轻微回弹，左右边缘列最明显
-              physics: const ClampingScrollPhysics(),
+              // 必须用 PageScrollPhysics 才能按「整页」吸附；纯 ClampingScrollPhysics 会导致短滑常弹回原月
+              physics: const _MonthPagePhysics(
+                parent: ClampingScrollPhysics(),
+              ),
               itemBuilder: (context, pageIndex) {
                 final monthStart = _monthStartFromPageIndex(pageIndex);
                 final data = _monthDataFor(monthStart, scheme);
@@ -355,12 +357,18 @@ class _CalendarPageState extends State<CalendarPage> {
 
   Widget _buildDayView(BuildContext context, ColorScheme scheme) {
     final shifts = _getShiftsForDay(_selectedDay);
+    // 每小时一行：底边为整点线，时间在该格内垂直居中，左右同高
+    const hourH = 56.0;
+    const timelineBottomBuffer = 20.0;
+    final scrollBottomPad =
+        MediaQuery.viewPaddingOf(context).bottom + 24;
 
     return Card(
       elevation: 0,
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: SingleChildScrollView(
+        padding: EdgeInsets.only(bottom: scrollBottomPad),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -453,64 +461,17 @@ class _CalendarPageState extends State<CalendarPage> {
                 ],
               ),
             ),
-            SizedBox(
-              height: 24 * 56,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 52,
-                    child: ListView.builder(
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: 24,
-                      itemBuilder: (context, index) {
-                        return SizedBox(
-                          height: 56,
-                          child: Align(
-                            alignment: Alignment.topRight,
-                            child: Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: Text(
-                                '${index.toString().padLeft(2, '0')}:00',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
-                                    ?.copyWith(color: scheme.outline),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (int h = 0; h < 24; h++)
+                  _DayTimelineHourRow(
+                    hour: h,
+                    hourH: hourH,
+                    scheme: scheme,
                   ),
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          left: BorderSide(color: scheme.outlineVariant),
-                        ),
-                      ),
-                      child: ListView.builder(
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: 24,
-                        itemBuilder: (context, index) {
-                          return Container(
-                            height: 56,
-                            decoration: BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: scheme.outlineVariant
-                                      .withValues(alpha: 0.5),
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                SizedBox(height: timelineBottomBuffer),
+              ],
             ),
           ],
         ),
@@ -524,6 +485,12 @@ class _CalendarPageState extends State<CalendarPage> {
     final weekDays =
         List.generate(7, (i) => startOfWeek.add(Duration(days: i)));
     const weekDayNames = ['一', '二', '三', '四', '五', '六', '日'];
+    const hourH = 56.0;
+    const timelineBottomBuffer = 20.0;
+    final scrollBottomPad =
+        MediaQuery.viewPaddingOf(context).bottom + 24;
+    final hasWeekAllDayStrip =
+        weekDays.any((d) => _getShiftsForDay(d).isNotEmpty);
 
     return Card(
       elevation: 0,
@@ -532,81 +499,83 @@ class _CalendarPageState extends State<CalendarPage> {
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
+          // 仅当有全天班次时占一行；否则整行空白会顶在日期表头上方，显得「空一大截」
+          if (hasWeekAllDayStrip)
+            SizedBox(
+              height: 40,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 52,
+                    child: Center(
+                      child: Text(
+                        '全天',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Row(
+                      children: weekDays.map((day) {
+                        final shifts = _getShiftsForDay(day);
+                        return Expanded(
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              border: Border(
+                                left: BorderSide(
+                                  color: scheme.outlineVariant.withValues(
+                                    alpha: 0.6,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            child: shifts.isEmpty
+                                ? null
+                                : Container(
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 6,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: shiftTypeColor(
+                                        shifts.first.shiftType,
+                                        scheme,
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      shifts.first.shiftType,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           SizedBox(
             height: 44,
             child: Row(
               children: [
                 SizedBox(
-                  width: 48,
-                  child: Center(
-                    child: Text(
-                      '全天',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Row(
-                    children: weekDays.map((day) {
-                      final shifts = _getShiftsForDay(day);
-                      return Expanded(
-                        child: Container(
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            border: Border(
-                              left: BorderSide(
-                                color: scheme.outlineVariant.withValues(
-                                  alpha: 0.6,
-                                ),
-                              ),
-                            ),
-                          ),
-                          child: shifts.isEmpty
-                              ? null
-                              : Container(
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 6,
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: shiftTypeColor(
-                                      shifts.first.shiftType,
-                                      scheme,
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    shifts.first.shiftType,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(
-            height: 48,
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 48,
-                  child: Container(
+                  width: 52,
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
                       border: Border(
                         bottom: BorderSide(
@@ -614,6 +583,19 @@ class _CalendarPageState extends State<CalendarPage> {
                         ),
                       ),
                     ),
+                    child: hasWeekAllDayStrip
+                        ? null
+                        : Center(
+                            child: Text(
+                              '全天',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ),
                   ),
                 ),
                 Expanded(
@@ -675,67 +657,17 @@ class _CalendarPageState extends State<CalendarPage> {
           ),
           Expanded(
             child: SingleChildScrollView(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: EdgeInsets.only(bottom: scrollBottomPad),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
-                    width: 48,
-                    child: Column(
-                      children: List.generate(24, (index) {
-                        return SizedBox(
-                          height: 52,
-                          child: Align(
-                            alignment: Alignment.topRight,
-                            child: Padding(
-                              padding: const EdgeInsets.only(right: 6, top: 2),
-                              child: Text(
-                                '${index.toString().padLeft(2, '0')}:00',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
-                                    ?.copyWith(color: scheme.outline),
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
+                  for (int h = 0; h < 24; h++)
+                    _WeekTimelineHourRow(
+                      hour: h,
+                      hourH: hourH,
+                      scheme: scheme,
                     ),
-                  ),
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: weekDays.map((day) {
-                        return Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              border: Border(
-                                left: BorderSide(
-                                  color: scheme.outlineVariant.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            child: Column(
-                              children: List.generate(24, (index) {
-                                return Container(
-                                  height: 52,
-                                  decoration: BoxDecoration(
-                                    border: Border(
-                                      bottom: BorderSide(
-                                        color: scheme.outlineVariant
-                                            .withValues(alpha: 0.35),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
+                  SizedBox(height: timelineBottomBuffer),
                 ],
               ),
             ),
@@ -942,4 +874,148 @@ class _MonthDayTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 日视图每小时一行：横线在行底（整点分界），时间文字在该小时格内垂直居中，左右同高对齐。
+class _DayTimelineHourRow extends StatelessWidget {
+  const _DayTimelineHourRow({
+    required this.hour,
+    required this.hourH,
+    required this.scheme,
+  });
+
+  final int hour;
+  final double hourH;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    final lineColor = scheme.outlineVariant.withValues(alpha: 0.55);
+    final labelStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: scheme.outline,
+          height: 1.0,
+          fontSize: 11,
+        );
+    return SizedBox(
+      height: hourH,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 52,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(
+                  '${hour.toString().padLeft(2, '0')}:00',
+                  style: labelStyle,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: scheme.outlineVariant),
+                  bottom: BorderSide(color: lineColor, width: 1),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 周视图每小时一行：与 [_DayTimelineHourRow] 同语义，右侧为 7 列日网格。
+class _WeekTimelineHourRow extends StatelessWidget {
+  const _WeekTimelineHourRow({
+    required this.hour,
+    required this.hourH,
+    required this.scheme,
+  });
+
+  final int hour;
+  final double hourH;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    final lineColor = scheme.outlineVariant.withValues(alpha: 0.55);
+    final labelStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: scheme.outline,
+          height: 1.0,
+          fontSize: 11,
+        );
+    return SizedBox(
+      height: hourH,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 52,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(
+                  '${hour.toString().padLeft(2, '0')}:00',
+                  style: labelStyle,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: List.generate(
+                7,
+                (_) => Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          color: scheme.outlineVariant.withValues(alpha: 0.5),
+                        ),
+                        bottom: BorderSide(color: lineColor, width: 1),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 月历横向翻页：[PageScrollPhysics] + 无 overscroll；阈值偏低、弹簧偏紧，翻月更轻、吸附更快。
+final class _MonthPagePhysics extends PageScrollPhysics {
+  const _MonthPagePhysics({super.parent});
+
+  @override
+  _MonthPagePhysics applyTo(ScrollPhysics? ancestor) {
+    return _MonthPagePhysics(parent: buildParent(ancestor));
+  }
+
+  /// 默认约 50；再降一档，轻拨即翻
+  @override
+  double get minFlingVelocity => 11;
+
+  /// 默认约 50；再降一档，短滑易过月
+  @override
+  double get minFlingDistance => 6;
+
+  /// 弹簧再紧一档，吸附更快
+  @override
+  SpringDescription get spring => SpringDescription.withDampingRatio(
+        mass: 0.28,
+        stiffness: 420,
+        ratio: 1.0,
+      );
 }
