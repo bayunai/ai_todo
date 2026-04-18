@@ -29,15 +29,13 @@ class _CalendarPageState extends State<CalendarPage> {
   ViewType _viewType = ViewType.month;
   DateTime _selectedDay = DateTime.now();
 
-  /// PageView 当前页（仅表示「正在看哪个月」）；与 [_selectedDay] 解耦，避免滑月时高亮跟着「几号」跳变
-  int _visibleMonthPageIndex =
-      (DateTime.now().year - _firstCalendarYear) * 12 +
-          (DateTime.now().month - 1);
+  /// 当前可见月份页索引；用 [ValueNotifier] 更新，避免滑页结束时 setState 整树重建导致格子宽度取整抖动
+  late final ValueNotifier<int> _visibleMonthNv;
 
   final Map<int, List<ShiftModel>> _shiftsByDayIndex = {};
   final Map<int, MonthGridData> _monthGridCache = {};
 
-  /// 必须在 initState 前完成构造；initialPage 与 [_visibleMonthPageIndex] 一致
+  /// 必须在 initState 前完成构造；initialPage 与 [_visibleMonthNv] 一致
   final PageController _monthPageController = PageController(
     initialPage: _monthPageIndexForMonthStart(
       DateTime(DateTime.now().year, DateTime.now().month, 1),
@@ -53,6 +51,11 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void initState() {
     super.initState();
+    _visibleMonthNv = ValueNotifier(
+      _monthPageIndexForMonthStart(
+        DateTime(DateTime.now().year, DateTime.now().month, 1),
+      ),
+    );
     Hive.box<ShiftModel>(HiveService.shiftsBoxName)
         .listenable()
         .addListener(_onBoxChanged);
@@ -62,6 +65,7 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void dispose() {
     _hiveDebounce?.cancel();
+    _visibleMonthNv.dispose();
     Hive.box<ShiftModel>(HiveService.shiftsBoxName)
         .listenable()
         .removeListener(_onBoxChanged);
@@ -121,8 +125,8 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   void _onMonthPageChanged(int index) {
-    if (!mounted || index == _visibleMonthPageIndex) return;
-    setState(() => _visibleMonthPageIndex = index);
+    if (!mounted || index == _visibleMonthNv.value) return;
+    _visibleMonthNv.value = index;
   }
 
   void _onCalendarDayTapped(DateTime day) {
@@ -131,6 +135,21 @@ class _CalendarPageState extends State<CalendarPage> {
     if (_monthPageController.hasClients &&
         _monthPageController.page?.round() != page) {
       _monthPageController.jumpToPage(page);
+    }
+  }
+
+  void _goToToday() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final page = _monthPageIndexFor(calendarMonthStart(today));
+    setState(() => _selectedDay = today);
+    if (_viewType != ViewType.month) return;
+    if (_monthPageController.hasClients) {
+      if (_monthPageController.page?.round() != page) {
+        _monthPageController.jumpToPage(page);
+      } else {
+        _visibleMonthNv.value = page;
+      }
     }
   }
 
@@ -164,16 +183,10 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   Widget _buildHeader(BuildContext context, ColorScheme scheme) {
-    String headerText;
-    if (_viewType == ViewType.month) {
-      headerText = _monthFormat.format(
-        _monthStartFromPageIndex(_visibleMonthPageIndex),
-      );
-    } else if (_viewType == ViewType.week) {
-      headerText = _weekFormat.format(_selectedDay);
-    } else {
-      headerText = _dayFormat.format(_selectedDay);
-    }
+    final titleStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: scheme.onSurface,
+        );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -218,17 +231,57 @@ class _CalendarPageState extends State<CalendarPage> {
           ),
         ),
         const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Text(
-            headerText,
-            textAlign: TextAlign.start,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: scheme.onSurface,
+        _viewType == ViewType.month
+            ? ValueListenableBuilder<int>(
+                valueListenable: _visibleMonthNv,
+                builder: (context, pageIdx, _) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _monthFormat.format(
+                            _monthStartFromPageIndex(pageIdx),
+                          ),
+                          textAlign: TextAlign.start,
+                          style: titleStyle,
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: _goToToday,
+                        icon: Icon(
+                          Icons.event_available_outlined,
+                          size: 20,
+                          color: scheme.primary,
+                        ),
+                        label: Text(
+                          '今日',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: scheme.primary,
+                          ),
+                        ),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              )
+            : Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _viewType == ViewType.week
+                      ? _weekFormat.format(_selectedDay)
+                      : _dayFormat.format(_selectedDay),
+                  textAlign: TextAlign.start,
+                  style: titleStyle,
                 ),
-          ),
-        ),
+              ),
       ],
     );
   }
@@ -251,10 +304,10 @@ class _CalendarPageState extends State<CalendarPage> {
             child: PageView.builder(
               controller: _monthPageController,
               itemCount: _monthPageCount,
+              clipBehavior: Clip.hardEdge,
               onPageChanged: _onMonthPageChanged,
-              physics: const BouncingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics(),
-              ),
+              // BouncingScrollPhysics 在页面对齐结束时常有轻微回弹，左右边缘列最明显
+              physics: const ClampingScrollPhysics(),
               itemBuilder: (context, pageIndex) {
                 final monthStart = _monthStartFromPageIndex(pageIndex);
                 final data = _monthDataFor(monthStart, scheme);
@@ -718,35 +771,51 @@ class _MonthGridBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: List.generate(6, (row) {
-        return Expanded(
-          child: Row(
-            children: List.generate(7, (col) {
-              final i = row * 7 + col;
-              final vm = cells[i];
-              final dayKey = calendarDayKey(vm.day);
-              // 仅在本页所属月份内显示「选中」高亮，避免滑月时选中态在数字上跳变
-              final selected = _sameDay(vm.day, selectedDay) &&
-                  _sameMonth(vm.day, visibleMonthStart);
-              final isToday = dayKey == todayKey;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final iw = constraints.maxWidth.round().clamp(1, 1 << 20);
+        final ih = constraints.maxHeight.round().clamp(1, 1 << 20);
+        final colBase = iw ~/ 7;
+        final colExtra = iw % 7;
+        double colW(int c) =>
+            (colBase + (c < colExtra ? 1 : 0)).toDouble();
+        final rowBase = ih ~/ 6;
+        final rowExtra = ih % 6;
+        double rowH(int r) =>
+            (rowBase + (r < rowExtra ? 1 : 0)).toDouble();
 
-              return Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(2),
-                  child: _MonthDayTile(
-                    vm: vm,
-                    selected: selected,
-                    isToday: isToday,
-                    scheme: colorScheme,
-                    onTap: () => onDayTap(vm.day),
-                  ),
-                ),
-              );
-            }),
-          ),
+        return Column(
+          children: List.generate(6, (row) {
+            return SizedBox(
+              height: rowH(row),
+              child: Row(
+                children: List.generate(7, (col) {
+                  final i = row * 7 + col;
+                  final vm = cells[i];
+                  final dayKey = calendarDayKey(vm.day);
+                  final selected = _sameDay(vm.day, selectedDay) &&
+                      _sameMonth(vm.day, visibleMonthStart);
+                  final isToday = dayKey == todayKey;
+
+                  return SizedBox(
+                    width: colW(col),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: _MonthDayTile(
+                        vm: vm,
+                        selected: selected,
+                        isToday: isToday,
+                        scheme: colorScheme,
+                        onTap: () => onDayTap(vm.day),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            );
+          }),
         );
-      }),
+      },
     );
   }
 }
