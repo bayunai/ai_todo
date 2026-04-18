@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'calendar_page.dart';
 import 'schedule_page.dart';
 import 'services/notification_service.dart';
+import 'settings_page.dart';
 import 'todo_page.dart';
 
 class MainPage extends StatefulWidget {
@@ -21,7 +22,7 @@ class _MainPageState extends State<MainPage> {
     const CalendarPage(),
     const SchedulePage(),
     const TodoPage(),
-    const PlaceholderPage(title: '设置'),
+    const SettingsPage(),
   ];
 
   @override

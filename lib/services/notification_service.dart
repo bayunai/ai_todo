@@ -355,12 +355,20 @@ class NotificationService {
 
   // ========= 常驻面板 =========
 
+  /// 用户偏好：常驻面板开关，默认开启
+  static const String kPrefOngoingPanelEnabled = 'ongoing_panel_enabled';
+
   static VoidCallback? _panelBoxListener;
+
+  static bool get isOngoingPanelEnabled =>
+      HiveService.getSetting<bool>(kPrefOngoingPanelEnabled, true);
 
   /// 启动常驻面板：初次 show + 挂载 Hive 变更监听，
   /// 每次待办 box 变更（增删改、勾选完成等）都会刷新展示。
+  /// 若用户关闭了开关则直接跳过。
   static Future<void> startOngoingPanel() async {
     if (!Platform.isAndroid) return;
+    if (!isOngoingPanelEnabled) return;
     if (!_initialized) await init();
 
     await refreshOngoingPanel();
@@ -383,6 +391,16 @@ class NotificationService {
     try {
       await _plugin.cancel(_panelId);
     } catch (_) {}
+  }
+
+  /// 设置开关：持久化 + 立刻启/停面板。
+  static Future<void> setOngoingPanelEnabled(bool enabled) async {
+    await HiveService.setSetting<bool>(kPrefOngoingPanelEnabled, enabled);
+    if (enabled) {
+      await startOngoingPanel();
+    } else {
+      await stopOngoingPanel();
+    }
   }
 
   /// 根据当前 Hive 中的待办实时生成面板文案并刷新。

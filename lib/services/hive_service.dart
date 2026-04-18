@@ -9,6 +9,7 @@ class HiveService {
   static const String eventsBoxName = 'events';
   static const String shiftsBoxName = 'shifts';
   static const String todosBoxName = 'todos';
+  static const String settingsBoxName = 'settings';
 
   // 初始化 Hive
   static Future<void> init() async {
@@ -29,7 +30,25 @@ class HiveService {
     await Hive.openBox<EventModel>(eventsBoxName);
     await Hive.openBox<ShiftModel>(shiftsBoxName);
     await Hive.openBox<TodoModel>(todosBoxName);
+    await Hive.openBox(settingsBoxName);
   }
+
+  // ========== 设置（轻量 KV 存储） ==========
+
+  static Box get _settingsBox => Hive.box(settingsBoxName);
+
+  static T getSetting<T>(String key, T defaultValue) {
+    final v = _settingsBox.get(key);
+    if (v is T) return v;
+    return defaultValue;
+  }
+
+  static Future<void> setSetting<T>(String key, T value) async {
+    await _settingsBox.put(key, value);
+  }
+
+  static ValueListenable<Box> listenableSettings(List<String> keys) =>
+      _settingsBox.listenable(keys: keys);
 
   // ========== 事件相关操作 ==========
   
