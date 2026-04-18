@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'models/todo_model.dart';
 import 'services/hive_service.dart';
 import 'services/notification_service.dart';
+import 'widgets/todo_time_picker_dialog.dart';
 
 enum TodoFilter { all, pending, done, overdue }
 
@@ -70,10 +71,19 @@ class _TodoPageState extends State<TodoPage> {
     super.dispose();
   }
 
-  /// 收到通知点击后：展开路径上的祖先，并打开该待办的编辑弹窗
-  void _openTodoByNotification(String id) {
-    final target = HiveService.getTodoById(id);
-    if (target == null || !mounted) return;
+  /// 收到通知点击后：
+  /// - `panel:add` → 打开新建待办编辑器
+  /// - `panel:open` → 仅切换 Tab（MainPage 已处理）
+  /// - 其它：按 todo.id 解析，展开祖先并打开编辑弹窗
+  void _openTodoByNotification(String payload) {
+    if (!mounted) return;
+    if (payload == NotificationService.panelAddPayload) {
+      _openEditor();
+      return;
+    }
+    if (payload == NotificationService.panelOpenPayload) return;
+    final target = HiveService.getTodoById(payload);
+    if (target == null) return;
     setState(() {
       var pid = target.parentId;
       while (pid != null) {
@@ -702,18 +712,42 @@ class _TodoCard extends StatelessWidget {
                                         if (t.dueAt != null)
                                           _TimeChip(
                                             icon: Icons.event_outlined,
-                                            text: _formatDateTime(t.dueAt!),
+                                            text: _formatTodoTime(
+                                              start: t.dueAt,
+                                              end: t.dueEndAt,
+                                              isAllDay: t.dueIsAllDay,
+                                            ),
                                             color: overdue
                                                 ? scheme.error
                                                 : scheme.primary,
+                                            scheme: scheme,
+                                          ),
+                                        if (t.dueRepeatRule != TodoRepeat.none)
+                                          _TimeChip(
+                                            icon: Icons.repeat,
+                                            text: TodoRepeat.label(
+                                                t.dueRepeatRule),
+                                            color: scheme.primary,
                                             scheme: scheme,
                                           ),
                                         if (t.remindAt != null)
                                           _TimeChip(
                                             icon: Icons
                                                 .notifications_active_outlined,
-                                            text:
-                                                _formatDateTime(t.remindAt!),
+                                            text: _formatTodoTime(
+                                              start: t.remindAt,
+                                              end: t.remindEndAt,
+                                              isAllDay: t.remindIsAllDay,
+                                            ),
+                                            color: scheme.tertiary,
+                                            scheme: scheme,
+                                          ),
+                                        if (t.remindRepeatRule !=
+                                            TodoRepeat.none)
+                                          _TimeChip(
+                                            icon: Icons.repeat,
+                                            text: TodoRepeat.label(
+                                                t.remindRepeatRule),
                                             color: scheme.tertiary,
                                             scheme: scheme,
                                           ),
@@ -952,19 +986,39 @@ class _TimeChip extends StatelessWidget {
   }
 }
 
-String _formatDateTime(DateTime dt) {
+String _formatTodoTime({
+  required DateTime? start,
+  required DateTime? end,
+  required bool isAllDay,
+}) {
+  if (start == null) return '--';
   final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  final target = DateTime(dt.year, dt.month, dt.day);
-  final diff = target.difference(today).inDays;
-  final hm = DateFormat('HH:mm').format(dt);
-  if (diff == 0) return '今天 $hm';
-  if (diff == 1) return '明天 $hm';
-  if (diff == -1) return '昨天 $hm';
-  if (dt.year == now.year) {
-    return DateFormat('M月d日 HH:mm').format(dt);
+  String dayOf(DateTime d) {
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(d.year, d.month, d.day);
+    final diff = target.difference(today).inDays;
+    if (diff == 0) return '今天';
+    if (diff == 1) return '明天';
+    if (diff == -1) return '昨天';
+    if (d.year == now.year) return DateFormat('M月d日').format(d);
+    return DateFormat('y年M月d日').format(d);
   }
-  return DateFormat('y年M月d日 HH:mm').format(dt);
+
+  String hm(DateTime d) => DateFormat('HH:mm').format(d);
+
+  if (isAllDay) {
+    return '${dayOf(start)} 全天';
+  }
+  if (end != null) {
+    final sameDay = start.year == end.year &&
+        start.month == end.month &&
+        start.day == end.day;
+    if (sameDay) {
+      return '${dayOf(start)} ${hm(start)}-${hm(end)}';
+    }
+    return '${dayOf(start)} ${hm(start)} → ${dayOf(end)} ${hm(end)}';
+  }
+  return '${dayOf(start)} ${hm(start)}';
 }
 
 // ============================================================
@@ -989,9 +1043,16 @@ class _TodoEditorSheet extends StatefulWidget {
 class _TodoEditorSheetState extends State<_TodoEditorSheet> {
   late final TextEditingController _titleCtrl;
   late final TextEditingController _noteCtrl;
+  final FocusNode _titleFocus = FocusNode();
   int _priority = TodoPriority.normal;
   DateTime? _dueAt;
+  DateTime? _dueEndAt;
+  bool _dueIsAllDay = false;
+  int _dueRepeat = TodoRepeat.none;
   DateTime? _remindAt;
+  DateTime? _remindEndAt;
+  bool _remindIsAllDay = false;
+  int _remindRepeat = TodoRepeat.none;
   String? _parentId;
 
   bool get _isEditing => widget.editing != null;
@@ -1004,14 +1065,30 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
     _noteCtrl = TextEditingController(text: e?.note ?? '');
     _priority = e?.priority ?? TodoPriority.normal;
     _dueAt = e?.dueAt;
+    _dueEndAt = e?.dueEndAt;
+    _dueIsAllDay = e?.dueIsAllDay ?? false;
+    _dueRepeat = e?.dueRepeatRule ?? TodoRepeat.none;
     _remindAt = e?.remindAt;
+    _remindEndAt = e?.remindEndAt;
+    _remindIsAllDay = e?.remindIsAllDay ?? false;
+    _remindRepeat = e?.remindRepeatRule ?? TodoRepeat.none;
     _parentId = e?.parentId ?? widget.initialParentId;
+
+    // 新建场景下等 Sheet 的上滑动画（~250ms）结束后再拉键盘，
+    // 避免入场动画与 IME 动画并发时 Padding(bottom: viewInsets) 逐帧重排
+    // 造成掉帧。编辑场景下不自动聚焦。
+    if (!_isEditing) {
+      Future.delayed(const Duration(milliseconds: 280), () {
+        if (mounted) _titleFocus.requestFocus();
+      });
+    }
   }
 
   @override
   void dispose() {
     _titleCtrl.dispose();
     _noteCtrl.dispose();
+    _titleFocus.dispose();
     super.dispose();
   }
 
@@ -1055,8 +1132,8 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
             const SizedBox(height: 16),
             TextField(
               controller: _titleCtrl,
+              focusNode: _titleFocus,
               textInputAction: TextInputAction.next,
-              autofocus: !_isEditing,
               decoration: const InputDecoration(
                 labelText: '标题',
                 border: OutlineInputBorder(),
@@ -1113,12 +1190,17 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
               scheme: scheme,
               icon: Icons.event_outlined,
               label: '截止时间',
-              value: _dueAt,
-              onPick: () async {
-                final picked = await _pickDateTime(_dueAt);
-                if (picked != null) setState(() => _dueAt = picked);
-              },
-              onClear: () => setState(() => _dueAt = null),
+              start: _dueAt,
+              end: _dueEndAt,
+              isAllDay: _dueIsAllDay,
+              repeatRule: _dueRepeat,
+              onPick: () => _pickDue(),
+              onClear: () => setState(() {
+                _dueAt = null;
+                _dueEndAt = null;
+                _dueIsAllDay = false;
+                _dueRepeat = TodoRepeat.none;
+              }),
             ),
             const SizedBox(height: 8),
             _buildTimeRow(
@@ -1126,12 +1208,17 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
               scheme: scheme,
               icon: Icons.notifications_active_outlined,
               label: '提醒时间',
-              value: _remindAt,
-              onPick: () async {
-                final picked = await _pickDateTime(_remindAt);
-                if (picked != null) setState(() => _remindAt = picked);
-              },
-              onClear: () => setState(() => _remindAt = null),
+              start: _remindAt,
+              end: _remindEndAt,
+              isAllDay: _remindIsAllDay,
+              repeatRule: _remindRepeat,
+              onPick: () => _pickRemind(),
+              onClear: () => setState(() {
+                _remindAt = null;
+                _remindEndAt = null;
+                _remindIsAllDay = false;
+                _remindRepeat = TodoRepeat.none;
+              }),
             ),
             const SizedBox(height: 16),
             _buildParentSelector(context, scheme),
@@ -1165,34 +1252,106 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
     required ColorScheme scheme,
     required IconData icon,
     required String label,
-    required DateTime? value,
+    required DateTime? start,
+    required DateTime? end,
+    required bool isAllDay,
+    required int repeatRule,
     required VoidCallback onPick,
     required VoidCallback onClear,
   }) {
+    final hasValue = start != null;
     return Row(
       children: [
         Icon(icon, size: 18, color: scheme.onSurfaceVariant),
         const SizedBox(width: 8),
         Text(label, style: Theme.of(context).textTheme.bodyMedium),
         const Spacer(),
-        if (value == null)
+        if (!hasValue)
           TextButton.icon(
             onPressed: onPick,
             icon: const Icon(Icons.add, size: 16),
             label: const Text('添加'),
           )
         else
-          InputChip(
-            avatar: Icon(Icons.schedule, size: 16, color: scheme.primary),
-            label: Text(_formatDateTime(value)),
-            onPressed: onPick,
-            onDeleted: onClear,
-            deleteIcon: const Icon(Icons.close, size: 16),
-            side: BorderSide.none,
-            backgroundColor: scheme.primary.withValues(alpha: 0.1),
+          Flexible(
+            child: Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                InputChip(
+                  avatar: Icon(Icons.schedule, size: 16, color: scheme.primary),
+                  label: Text(
+                    _formatTodoTime(
+                      start: start,
+                      end: end,
+                      isAllDay: isAllDay,
+                    ),
+                  ),
+                  onPressed: onPick,
+                  onDeleted: onClear,
+                  deleteIcon: const Icon(Icons.close, size: 16),
+                  side: BorderSide.none,
+                  backgroundColor: scheme.primary.withValues(alpha: 0.1),
+                ),
+                if (repeatRule != TodoRepeat.none)
+                  Chip(
+                    avatar: Icon(Icons.repeat,
+                        size: 14, color: scheme.tertiary),
+                    label: Text(TodoRepeat.label(repeatRule)),
+                    visualDensity: VisualDensity.compact,
+                    side: BorderSide.none,
+                    backgroundColor: scheme.tertiary.withValues(alpha: 0.1),
+                  ),
+              ],
+            ),
           ),
       ],
     );
+  }
+
+  Future<void> _pickDue() async {
+    final result = await TodoTimePickerDialog.show(
+      context,
+      title: '截止时间',
+      initial: _dueAt == null
+          ? null
+          : TodoTimeSelection(
+              start: _dueAt,
+              end: _dueEndAt,
+              isAllDay: _dueIsAllDay,
+              repeatRule: _dueRepeat,
+            ),
+    );
+    if (result == null) return;
+    setState(() {
+      _dueAt = result.start;
+      _dueEndAt = result.end;
+      _dueIsAllDay = result.isAllDay;
+      _dueRepeat = result.repeatRule;
+    });
+  }
+
+  Future<void> _pickRemind() async {
+    final result = await TodoTimePickerDialog.show(
+      context,
+      title: '提醒时间',
+      initial: _remindAt == null
+          ? null
+          : TodoTimeSelection(
+              start: _remindAt,
+              end: _remindEndAt,
+              isAllDay: _remindIsAllDay,
+              repeatRule: _remindRepeat,
+            ),
+    );
+    if (result == null) return;
+    setState(() {
+      _remindAt = result.start;
+      _remindEndAt = result.end;
+      _remindIsAllDay = result.isAllDay;
+      _remindRepeat = result.repeatRule;
+    });
   }
 
   Widget _buildParentSelector(BuildContext context, ColorScheme scheme) {
@@ -1248,23 +1407,6 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
     );
   }
 
-  Future<DateTime?> _pickDateTime(DateTime? initial) async {
-    final base = initial ?? DateTime.now();
-    final date = await showDatePicker(
-      context: context,
-      initialDate: base,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2035),
-    );
-    if (date == null || !mounted) return null;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(base),
-    );
-    if (time == null) return null;
-    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
-  }
-
   Future<void> _save() async {
     final title = _titleCtrl.text.trim();
     if (title.isEmpty) {
@@ -1293,6 +1435,12 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
         remindAt: _remindAt,
         parentId: _parentId,
         orderIndex: HiveService.nextOrderIndex(_parentId),
+        dueEndAt: _dueEndAt,
+        dueIsAllDay: _dueIsAllDay,
+        dueRepeatRule: _dueRepeat,
+        remindEndAt: _remindEndAt,
+        remindIsAllDay: _remindIsAllDay,
+        remindRepeatRule: _remindRepeat,
       );
       await HiveService.addTodo(todo);
     } else {
@@ -1301,6 +1449,12 @@ class _TodoEditorSheetState extends State<_TodoEditorSheet> {
       e.priority = _priority;
       e.dueAt = _dueAt;
       e.remindAt = _remindAt;
+      e.dueEndAt = _dueEndAt;
+      e.dueIsAllDay = _dueIsAllDay;
+      e.dueRepeatRule = _dueRepeat;
+      e.remindEndAt = _remindEndAt;
+      e.remindIsAllDay = _remindIsAllDay;
+      e.remindRepeatRule = _remindRepeat;
       if (e.parentId != _parentId) {
         e.parentId = _parentId;
         e.orderIndex = HiveService.nextOrderIndex(_parentId);

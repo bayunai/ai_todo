@@ -44,6 +44,33 @@ class TodoPriority {
   }
 }
 
+/// 时间重复规则。数值与 Hive 字段保持一致，向后追加即可。
+class TodoRepeat {
+  static const int none = 0;
+  static const int daily = 1;
+  static const int weekly = 2;
+  static const int monthly = 3;
+  static const int yearly = 4;
+
+  static const List<int> values = [none, daily, weekly, monthly, yearly];
+
+  static String label(int r) {
+    switch (r) {
+      case daily:
+        return '每天';
+      case weekly:
+        return '每周';
+      case monthly:
+        return '每月';
+      case yearly:
+        return '每年';
+      case none:
+      default:
+        return '无';
+    }
+  }
+}
+
 @HiveType(typeId: 2)
 class TodoModel extends HiveObject {
   @HiveField(0)
@@ -82,6 +109,30 @@ class TodoModel extends HiveObject {
   @HiveField(10)
   DateTime createdAt;
 
+  /// 截止时间段终点（null 表示时间点）
+  @HiveField(11)
+  DateTime? dueEndAt;
+
+  /// 截止时间的重复规则，见 [TodoRepeat]
+  @HiveField(12, defaultValue: 0)
+  int dueRepeatRule;
+
+  /// 截止是否全天（true 时忽略具体时分）
+  @HiveField(13, defaultValue: false)
+  bool dueIsAllDay;
+
+  /// 提醒时间段终点（仅展示，不影响调度）
+  @HiveField(14)
+  DateTime? remindEndAt;
+
+  /// 提醒的重复规则，见 [TodoRepeat]
+  @HiveField(15, defaultValue: 0)
+  int remindRepeatRule;
+
+  /// 提醒是否全天（true 时调度时默认改为当日 09:00）
+  @HiveField(16, defaultValue: false)
+  bool remindIsAllDay;
+
   TodoModel({
     required this.id,
     required this.title,
@@ -94,6 +145,12 @@ class TodoModel extends HiveObject {
     this.parentId,
     this.orderIndex = 0,
     required this.createdAt,
+    this.dueEndAt,
+    this.dueRepeatRule = TodoRepeat.none,
+    this.dueIsAllDay = false,
+    this.remindEndAt,
+    this.remindRepeatRule = TodoRepeat.none,
+    this.remindIsAllDay = false,
   });
 
   factory TodoModel.create({
@@ -104,6 +161,12 @@ class TodoModel extends HiveObject {
     DateTime? remindAt,
     String? parentId,
     int orderIndex = 0,
+    DateTime? dueEndAt,
+    int dueRepeatRule = TodoRepeat.none,
+    bool dueIsAllDay = false,
+    DateTime? remindEndAt,
+    int remindRepeatRule = TodoRepeat.none,
+    bool remindIsAllDay = false,
   }) {
     final now = DateTime.now();
     return TodoModel(
@@ -116,6 +179,12 @@ class TodoModel extends HiveObject {
       parentId: parentId,
       orderIndex: orderIndex,
       createdAt: now,
+      dueEndAt: dueEndAt,
+      dueRepeatRule: dueRepeatRule,
+      dueIsAllDay: dueIsAllDay,
+      remindEndAt: remindEndAt,
+      remindRepeatRule: remindRepeatRule,
+      remindIsAllDay: remindIsAllDay,
     );
   }
 

@@ -17,6 +17,8 @@ Future<void> main() async {
   await NotificationService.init();
   // 兜底：升级/重装/时区变更后把 Hive 中仍需提醒的待办重新排期
   await NotificationService.rescheduleAllFromHive();
+  // 常驻面板：状态栏显示待办进度 + 快捷添加
+  await NotificationService.startOngoingPanel();
 
   runApp(const MyApp());
 }

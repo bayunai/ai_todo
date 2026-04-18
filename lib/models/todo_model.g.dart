@@ -28,13 +28,19 @@ class TodoModelAdapter extends TypeAdapter<TodoModel> {
       parentId: fields[8] as String?,
       orderIndex: fields[9] as int,
       createdAt: fields[10] as DateTime,
+      dueEndAt: fields[11] as DateTime?,
+      dueRepeatRule: fields[12] == null ? 0 : fields[12] as int,
+      dueIsAllDay: fields[13] == null ? false : fields[13] as bool,
+      remindEndAt: fields[14] as DateTime?,
+      remindRepeatRule: fields[15] == null ? 0 : fields[15] as int,
+      remindIsAllDay: fields[16] == null ? false : fields[16] as bool,
     );
   }
 
   @override
   void write(BinaryWriter writer, TodoModel obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -56,7 +62,19 @@ class TodoModelAdapter extends TypeAdapter<TodoModel> {
       ..writeByte(9)
       ..write(obj.orderIndex)
       ..writeByte(10)
-      ..write(obj.createdAt);
+      ..write(obj.createdAt)
+      ..writeByte(11)
+      ..write(obj.dueEndAt)
+      ..writeByte(12)
+      ..write(obj.dueRepeatRule)
+      ..writeByte(13)
+      ..write(obj.dueIsAllDay)
+      ..writeByte(14)
+      ..write(obj.remindEndAt)
+      ..writeByte(15)
+      ..write(obj.remindRepeatRule)
+      ..writeByte(16)
+      ..write(obj.remindIsAllDay);
   }
 
   @override

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
@@ -14,6 +14,11 @@ import 'hive_service.dart';
 /// 这里只做最轻工作：把 payload 写入进程间可共享的 stream/pending 字段。
 @pragma('vm:entry-point')
 void _onBackgroundNotificationResponse(NotificationResponse response) {
+  final actionId = response.actionId;
+  if (actionId == NotificationService.kPanelAddActionId) {
+    NotificationService._dispatch(NotificationService.panelAddPayload);
+    return;
+  }
   final payload = response.payload;
   if (payload == null || payload.isEmpty) return;
   NotificationService._dispatch(payload);
@@ -26,8 +31,32 @@ class NotificationService {
   static const String _channelName = '待办提醒';
   static const String _channelDesc = '到达提醒时间时弹出待办通知';
 
-  static final FlutterLocalNotificationsPlugin _plugin =
-      FlutterLocalNotificationsPlugin();
+  // 常驻面板（状态栏）：Android 专用，静音低优先级，不可滑除
+  static const String _panelChannelId = 'todo_panel';
+  static const String _panelChannelName = '待办面板';
+  static const String _panelChannelDesc = '状态栏常驻，显示待办进度与快速操作';
+  static const int _panelId = 2026_04_18;
+
+  /// 面板点击体本身对应的 payload（只切 Tab，不做额外动作）
+  static const String panelOpenPayload = 'panel:open';
+
+  /// 「添加」action 对应的 payload
+  static const String panelAddPayload = 'panel:add';
+
+  /// 「添加」action id，供后台回调识别
+  static const String kPanelAddActionId = 'panel_add';
+
+  // 19.x：插件实例必须在 Flutter 绑定初始化之后构造，避免
+  // FlutterLocalNotificationsPlatform._instance 未注册导致 LateInitializationError。
+  static FlutterLocalNotificationsPlugin? _pluginInstance;
+  static FlutterLocalNotificationsPlugin get _plugin {
+    final p = _pluginInstance;
+    if (p == null) {
+      throw StateError('NotificationService.init() must be called first');
+    }
+    return p;
+  }
+
   static final StreamController<String> _tapCtrl =
       StreamController<String>.broadcast();
   static String? _pendingPayload;
@@ -58,6 +87,10 @@ class NotificationService {
   static Future<void> init() async {
     if (_initialized) return;
 
+    // 19.x：确保 Flutter 引擎已就绪后再创建插件实例
+    WidgetsFlutterBinding.ensureInitialized();
+    _pluginInstance ??= FlutterLocalNotificationsPlugin();
+
     tzdata.initializeTimeZones();
     try {
       final name = await FlutterTimezone.getLocalTimezone();
@@ -81,6 +114,11 @@ class NotificationService {
     await _plugin.initialize(
       settings,
       onDidReceiveNotificationResponse: (response) {
+        final actionId = response.actionId;
+        if (actionId == kPanelAddActionId) {
+          _dispatch(panelAddPayload);
+          return;
+        }
         final payload = response.payload;
         if (payload != null && payload.isNotEmpty) {
           _dispatch(payload);
@@ -101,6 +139,17 @@ class NotificationService {
           description: _channelDesc,
           importance: Importance.high,
           enableVibration: true,
+        ),
+      );
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _panelChannelId,
+          _panelChannelName,
+          description: _panelChannelDesc,
+          importance: Importance.low,
+          playSound: false,
+          enableVibration: false,
+          showBadge: false,
         ),
       );
     }
@@ -161,18 +210,43 @@ class NotificationService {
   static int _idFor(String todoId) => todoId.hashCode & 0x7fffffff;
 
   /// 先取消旧调度，再按当前状态重新安排：
-  /// - 已完成 / 无提醒 / 提醒时间不在未来 → 仅取消
+  /// - 已完成 / 无提醒 → 仅取消
+  /// - 单次且提醒时间不在未来 → 仅取消
+  /// - 重复规则非 none → 首次时刻 + matchDateTimeComponents 按周期复发
   static Future<void> scheduleForTodo(TodoModel todo) async {
     if (!_initialized) return;
     final id = _idFor(todo.id);
     await _plugin.cancel(id);
 
-    final when = todo.remindAt;
-    if (todo.done || when == null) return;
-    final scheduled = tz.TZDateTime.from(when, tz.local);
-    if (scheduled.isBefore(tz.TZDateTime.now(tz.local))) return;
+    final raw = todo.remindAt;
+    if (todo.done || raw == null) return;
+
+    // 全天提醒：时=0 时默认推到当天 09:00
+    DateTime when = raw;
+    if (todo.remindIsAllDay && when.hour == 0 && when.minute == 0) {
+      when = DateTime(when.year, when.month, when.day, 9, 0);
+    }
+
+    var scheduled = tz.TZDateTime.from(when, tz.local);
+    final now = tz.TZDateTime.now(tz.local);
+
+    final repeat = todo.remindRepeatRule;
+    final isRepeating = repeat != TodoRepeat.none;
+
+    if (isRepeating) {
+      // 历史时刻：推到下一个匹配时刻，避免 zonedSchedule 报 "past time"
+      scheduled = _rollForward(scheduled, repeat, now);
+    } else {
+      if (scheduled.isBefore(now)) return;
+    }
+
+    final match = _matchComponentsOf(repeat);
 
     final body = todo.note.isNotEmpty ? todo.note : '到点啦，记得处理这条待办';
+    final androidMode = isRepeating
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.alarmClock;
+
     try {
       await _plugin.zonedSchedule(
         id,
@@ -194,16 +268,65 @@ class NotificationService {
             presentSound: true,
           ),
         ),
-        // 使用 alarmClock：底层是 AlarmManager.setAlarmClock()，
-        // 豁免 Doze / App Standby / MIUI 等 OEM 的电量限制，锁屏后仍按时触发
-        androidScheduleMode: AndroidScheduleMode.alarmClock,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
+        androidScheduleMode: androidMode,
+        matchDateTimeComponents: match,
         payload: todo.id,
       );
     } catch (e, st) {
       // 未授权 SCHEDULE_EXACT_ALARM 等情况不应 crash app；由 UI 的 ensurePermissions 提示
       debugPrint('[NotificationService] schedule failed: $e\n$st');
+    }
+  }
+
+  /// 将重复规则映射为 plugin 匹配规则。
+  static DateTimeComponents? _matchComponentsOf(int rule) {
+    switch (rule) {
+      case TodoRepeat.daily:
+        return DateTimeComponents.time;
+      case TodoRepeat.weekly:
+        return DateTimeComponents.dayOfWeekAndTime;
+      case TodoRepeat.monthly:
+        return DateTimeComponents.dayOfMonthAndTime;
+      case TodoRepeat.yearly:
+        return DateTimeComponents.dateAndTime;
+      case TodoRepeat.none:
+      default:
+        return null;
+    }
+  }
+
+  /// 重复规则下，把过去时刻推到下一个匹配的未来时刻。
+  static tz.TZDateTime _rollForward(
+    tz.TZDateTime base,
+    int rule,
+    tz.TZDateTime now,
+  ) {
+    var t = base;
+    switch (rule) {
+      case TodoRepeat.daily:
+        while (!t.isAfter(now)) {
+          t = t.add(const Duration(days: 1));
+        }
+        return t;
+      case TodoRepeat.weekly:
+        while (!t.isAfter(now)) {
+          t = t.add(const Duration(days: 7));
+        }
+        return t;
+      case TodoRepeat.monthly:
+        while (!t.isAfter(now)) {
+          t = tz.TZDateTime(
+              tz.local, t.year, t.month + 1, t.day, t.hour, t.minute);
+        }
+        return t;
+      case TodoRepeat.yearly:
+        while (!t.isAfter(now)) {
+          t = tz.TZDateTime(
+              tz.local, t.year + 1, t.month, t.day, t.hour, t.minute);
+        }
+        return t;
+      default:
+        return t;
     }
   }
 
@@ -213,14 +336,118 @@ class NotificationService {
   }
 
   /// 启动时兜底：升级/重装/时区变更/重启后，根据 Hive 中所有待办重建调度。
+  /// 注意：保留常驻面板通知，只取消"到点提醒"类通知。
   static Future<void> rescheduleAllFromHive() async {
     if (!_initialized) return;
-    await _plugin.cancelAll();
+    final pending = await _plugin.pendingNotificationRequests();
+    for (final p in pending) {
+      if (p.id != _panelId) {
+        await _plugin.cancel(p.id);
+      }
+    }
     final todos = HiveService.getAllTodos();
     for (final t in todos) {
       if (!t.done && t.remindAt != null) {
         await scheduleForTodo(t);
       }
+    }
+  }
+
+  // ========= 常驻面板 =========
+
+  static VoidCallback? _panelBoxListener;
+
+  /// 启动常驻面板：初次 show + 挂载 Hive 变更监听，
+  /// 每次待办 box 变更（增删改、勾选完成等）都会刷新展示。
+  static Future<void> startOngoingPanel() async {
+    if (!Platform.isAndroid) return;
+    if (!_initialized) await init();
+
+    await refreshOngoingPanel();
+
+    _panelBoxListener ??= () {
+      // 监听器是同步回调，用 unawaited 派发异步刷新
+      // ignore: discarded_futures
+      refreshOngoingPanel();
+    };
+    HiveService.listenableTodos().addListener(_panelBoxListener!);
+  }
+
+  /// 关闭常驻面板并停止监听。
+  static Future<void> stopOngoingPanel() async {
+    if (_panelBoxListener != null) {
+      HiveService.listenableTodos().removeListener(_panelBoxListener!);
+      _panelBoxListener = null;
+    }
+    if (!_initialized) return;
+    try {
+      await _plugin.cancel(_panelId);
+    } catch (_) {}
+  }
+
+  /// 根据当前 Hive 中的待办实时生成面板文案并刷新。
+  static Future<void> refreshOngoingPanel() async {
+    if (!Platform.isAndroid || !_initialized) return;
+
+    final todos = HiveService.getAllTodos();
+    var total = todos.length;
+    var done = 0;
+    var overdue = 0;
+    for (final t in todos) {
+      if (t.done) {
+        done++;
+      } else if (t.isOverdue) {
+        overdue++;
+      }
+    }
+    final pending = total - done;
+
+    final title = total == 0 ? '待办' : '待办  $done / $total';
+    final String body;
+    if (total == 0) {
+      body = '点「添加」创建第一条待办';
+    } else if (overdue > 0) {
+      body = '进行中 $pending · 逾期 $overdue';
+    } else if (pending == 0) {
+      body = '全部搞定 🎉';
+    } else {
+      body = '还有 $pending 条进行中';
+    }
+
+    final details = AndroidNotificationDetails(
+      _panelChannelId,
+      _panelChannelName,
+      channelDescription: _panelChannelDesc,
+      importance: Importance.low,
+      priority: Priority.low,
+      ongoing: true,
+      autoCancel: false,
+      playSound: false,
+      enableVibration: false,
+      onlyAlertOnce: true,
+      showWhen: false,
+      category: AndroidNotificationCategory.status,
+      visibility: NotificationVisibility.public,
+      actions: const <AndroidNotificationAction>[
+        AndroidNotificationAction(
+          kPanelAddActionId,
+          '添加',
+          showsUserInterface: true,
+          cancelNotification: false,
+        ),
+      ],
+    );
+
+    try {
+      await _plugin.show(
+        _panelId,
+        title,
+        body,
+        NotificationDetails(android: details),
+        payload: panelOpenPayload,
+      );
+    } catch (e, st) {
+      debugPrint('[NotificationService] panel show failed: $e\n$st');
     }
   }
 }

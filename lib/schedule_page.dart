@@ -438,7 +438,7 @@ class _SchedulePageState extends State<SchedulePage> {
                       await HiveService.addShift(newShift);
                     }
 
-                    if (mounted) {
+                    if (context.mounted) {
                       Navigator.pop(context);
                     }
                   },
@@ -468,7 +468,7 @@ class _SchedulePageState extends State<SchedulePage> {
               onPressed: () async {
                 if (shift.id != null) {
                   await HiveService.deleteShiftById(shift.id!);
-                  if (mounted) {
+                  if (context.mounted) {
                     Navigator.pop(context);
                   }
                 }
