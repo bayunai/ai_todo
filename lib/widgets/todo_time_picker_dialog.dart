@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models/todo_model.dart';
@@ -58,6 +59,8 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
   DateTime? _start;
   DateTime? _end;
   int _repeatRule = TodoRepeat.none;
+  /// `initial == null` 时默认开启（与原先默认草稿时间一致）；若传入 `initial` 且 `start == null` 则关闭。
+  late bool _reminderEnabled;
 
   @override
   void initState() {
@@ -84,6 +87,8 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
     }
     final anchor = _start ?? now;
     _visibleMonth = DateTime(anchor.year, anchor.month);
+    final ini = widget.initial;
+    _reminderEnabled = ini == null || ini.start != null;
   }
 
   @override
@@ -127,10 +132,23 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
                 const SizedBox(height: 8),
                 if (_mode != TodoPickerMode.allDay) ...[
                   const Divider(height: 1),
-                  _buildTimeRow(context, scheme),
+                  Opacity(
+                    opacity: _reminderEnabled ? 1.0 : 0.45,
+                    child: IgnorePointer(
+                      ignoring: !_reminderEnabled,
+                      child: _buildTimeRow(context, scheme),
+                    ),
+                  ),
                 ],
+                _buildReminderSwitchRow(context, scheme),
                 const Divider(height: 1),
-                _buildRepeatRow(context, scheme),
+                Opacity(
+                  opacity: _reminderEnabled ? 1.0 : 0.45,
+                  child: IgnorePointer(
+                    ignoring: !_reminderEnabled,
+                    child: _buildRepeatRow(context, scheme),
+                  ),
+                ),
               ],
             ),
           ),
@@ -460,34 +478,118 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
   }
 
   Future<void> _pickTime({required bool isEnd}) async {
+    if (!_reminderEnabled) return;
     final base =
         (isEnd ? (_end ?? _start) : _start) ?? DateTime.now();
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(base),
+    var temp = DateTime(
+      base.year,
+      base.month,
+      base.day,
+      base.hour,
+      base.minute,
     );
-    if (picked == null) return;
-    setState(() {
-      if (isEnd) {
-        final anchor = _end ?? _start ?? DateTime.now();
-        _end = DateTime(anchor.year, anchor.month, anchor.day,
-            picked.hour, picked.minute);
-        // 若新 end < start，交换
-        if (_start != null && _end!.isBefore(_start!)) {
-          final tmp = _start!;
-          _start = _end;
-          _end = tmp;
-        }
-      } else {
-        final anchor = _start ?? DateTime.now();
-        _start = DateTime(anchor.year, anchor.month, anchor.day,
-            picked.hour, picked.minute);
-        if (_end != null && _end!.isBefore(_start!)) {
-          _end = DateTime(anchor.year, anchor.month, anchor.day,
-              picked.hour + 1, picked.minute);
-        }
-      }
-    });
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(sheetContext),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        setState(() {
+                          if (isEnd) {
+                            final anchor =
+                                _end ?? _start ?? DateTime.now();
+                            _end = DateTime(
+                              anchor.year,
+                              anchor.month,
+                              anchor.day,
+                              temp.hour,
+                              temp.minute,
+                            );
+                            if (_start != null &&
+                                _end!.isBefore(_start!)) {
+                              final tmp = _start!;
+                              _start = _end;
+                              _end = tmp;
+                            }
+                          } else {
+                            final anchor = _start ?? DateTime.now();
+                            _start = DateTime(
+                              anchor.year,
+                              anchor.month,
+                              anchor.day,
+                              temp.hour,
+                              temp.minute,
+                            );
+                            if (_end != null &&
+                                _end!.isBefore(_start!)) {
+                              _end = DateTime(
+                                anchor.year,
+                                anchor.month,
+                                anchor.day,
+                                temp.hour + 1,
+                                temp.minute,
+                              );
+                            }
+                          }
+                        });
+                      },
+                      child: const Text('确定'),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                height: 216,
+                child: CupertinoDatePicker(
+                  mode: CupertinoDatePickerMode.time,
+                  use24hFormat: true,
+                  initialDateTime: temp,
+                  onDateTimeChanged: (d) {
+                    temp = DateTime(
+                      base.year,
+                      base.month,
+                      base.day,
+                      d.hour,
+                      d.minute,
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildReminderSwitchRow(BuildContext context, ColorScheme scheme) {
+    final theme = Theme.of(context);
+    return SwitchListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+      title: Text('提醒', style: theme.textTheme.bodyMedium),
+      subtitle: Text(
+        '关闭后确定将不保存提醒时间',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      value: _reminderEnabled,
+      onChanged: (v) => setState(() => _reminderEnabled = v),
+    );
   }
 
   // --- Repeat row -------------------------------------------------------
@@ -519,6 +621,7 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
   }
 
   Future<void> _pickRepeat() async {
+    if (!_reminderEnabled) return;
     final result = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
@@ -549,6 +652,7 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
   // --- Confirm / output -------------------------------------------------
 
   bool _canConfirm() {
+    if (!_reminderEnabled) return true;
     if (_start == null) return false;
     if (_mode == TodoPickerMode.range) {
       return _end != null && !_end!.isBefore(_start!);
@@ -558,6 +662,18 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
 
   void _onConfirm() {
     if (!_canConfirm()) return;
+    if (!_reminderEnabled) {
+      Navigator.pop(
+        context,
+        const TodoTimeSelection(
+          start: null,
+          end: null,
+          isAllDay: false,
+          repeatRule: TodoRepeat.none,
+        ),
+      );
+      return;
+    }
     DateTime? s = _start;
     DateTime? e = _end;
     final allDay = _mode == TodoPickerMode.allDay;
