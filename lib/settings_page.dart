@@ -1,11 +1,13 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'services/hive_service.dart';
 import 'services/notification_service.dart';
 import 'services/tab_prefs.dart';
+import 'services/todo_overlay_bridge.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -52,6 +54,17 @@ class SettingsPage extends StatelessWidget {
                 _ReminderAlertModeRow(),
               ],
             ),
+            if (Platform.isAndroid) ...[
+              const SizedBox(height: 16),
+              const _SectionHeader(title: '通知悬浮窗'),
+              const _SettingsCard(
+                children: [
+                  _NotificationQuickOverlaySwitch(),
+                  _NotificationOverlayPermissionTile(),
+                  _MoveTaskBackAfterOverlaySwitch(),
+                ],
+              ),
+            ],
             const SizedBox(height: 16),
             const _SectionHeader(title: '反馈'),
             const _SettingsCard(
@@ -229,6 +242,110 @@ class _BootStartSwitch extends StatelessWidget {
                   await NotificationService.setBootStartEnabled(v);
                 }
               : null,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        );
+      },
+    );
+  }
+}
+
+// ========== 通知悬浮窗（Android）==========
+
+class _NotificationQuickOverlaySwitch extends StatelessWidget {
+  const _NotificationQuickOverlaySwitch();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Box>(
+      valueListenable: HiveService.listenableSettings(
+        const [kPrefNotificationQuickOverlay],
+      ),
+      builder: (context, _, _) {
+        final enabled =
+            HiveService.getSetting<bool>(kPrefNotificationQuickOverlay, false);
+        final scheme = Theme.of(context).colorScheme;
+        return SwitchListTile.adaptive(
+          value: enabled,
+          title: const Text('通知点待办时使用悬浮窗'),
+          subtitle: Text(
+            '需开启「显示在其他应用上层」权限；与列表里点行的弹窗内容一致',
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+          secondary: Icon(
+            Icons.picture_in_picture_alt_outlined,
+            color: scheme.primary,
+          ),
+          onChanged: (v) async {
+            await HiveService.setSetting<bool>(kPrefNotificationQuickOverlay, v);
+          },
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        );
+      },
+    );
+  }
+}
+
+class _NotificationOverlayPermissionTile extends StatelessWidget {
+  const _NotificationOverlayPermissionTile();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+      leading: Icon(Icons.layers_outlined, color: scheme.primary),
+      title: const Text('开启悬浮窗权限'),
+      subtitle: Text(
+        '跳转到系统设置，允许本应用在其他应用上层显示',
+        style: TextStyle(color: scheme.onSurfaceVariant),
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () async {
+        try {
+          await FlutterOverlayWindow.requestPermission();
+        } catch (_) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('无法打开权限页')),
+          );
+        }
+      },
+    );
+  }
+}
+
+class _MoveTaskBackAfterOverlaySwitch extends StatelessWidget {
+  const _MoveTaskBackAfterOverlaySwitch();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Box>(
+      valueListenable: HiveService.listenableSettings(
+        const [kPrefMoveTaskBackAfterTodoOverlay],
+      ),
+      builder: (context, _, _) {
+        final enabled = HiveService.getSetting<bool>(
+          kPrefMoveTaskBackAfterTodoOverlay,
+          true,
+        );
+        final scheme = Theme.of(context).colorScheme;
+        return SwitchListTile.adaptive(
+          value: enabled,
+          title: const Text('悬浮窗出现后退回桌面'),
+          subtitle: Text(
+            '隐藏全屏应用界面；部分机型可能无效，应用仍在最近任务中可见',
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+          secondary: Icon(
+            Icons.flip_to_back_outlined,
+            color: scheme.primary,
+          ),
+          onChanged: (v) async {
+            await HiveService.setSetting<bool>(
+              kPrefMoveTaskBackAfterTodoOverlay,
+              v,
+            );
+          },
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),
         );
       },

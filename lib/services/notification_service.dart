@@ -128,6 +128,10 @@ class NotificationService {
   static String? _pendingPayload;
   static bool _initialized = false;
 
+  /// Android：点「待办提醒」通知时，在发 [onTap] 之前先执行（例如弹出悬浮窗）。
+  /// 由 [main.dart] 注册，避免 [notification_service] 依赖悬浮窗模块产生循环 import。
+  static Future<void> Function(String todoId)? androidTodoTapPreprocessor;
+
   /// 点击通知后的 payload（todo.id）广播流；前台/后台/冷启动都从此出。
   static Stream<String> get onTap => _tapCtrl.stream;
 
@@ -142,9 +146,24 @@ class NotificationService {
   /// payload 留给 TodoPage 去 [consumePendingPayload]。
   static bool get hasPendingPayload => _pendingPayload != null;
 
+  /// 查看当前 pending（不清空），供路由/Tab 判断等使用。
+  static String? peekPendingPayload() => _pendingPayload;
+
   /// 内部：统一写 pending + broadcast
   static void _dispatch(String payload) {
     _pendingPayload = payload;
+    if (!_tapCtrl.isClosed) {
+      _tapCtrl.add(payload);
+    }
+  }
+
+  /// 主线程：先 [androidTodoTapPreprocessor]（若已注册），再发 [onTap]。
+  static Future<void> _emitTodoTapWithPreprocessor(String payload) async {
+    _pendingPayload = payload;
+    final pre = androidTodoTapPreprocessor;
+    if (pre != null) {
+      await pre(payload);
+    }
     if (!_tapCtrl.isClosed) {
       _tapCtrl.add(payload);
     }
@@ -186,9 +205,16 @@ class NotificationService {
           return;
         }
         final payload = response.payload;
-        if (payload != null && payload.isNotEmpty) {
-          _dispatch(payload);
+        if (payload == null || payload.isEmpty) return;
+
+        if (Platform.isAndroid &&
+            payload != panelOpenPayload &&
+            payload != panelAddPayload &&
+            HiveService.getTodoById(payload) != null) {
+          unawaited(_emitTodoTapWithPreprocessor(payload));
+          return;
         }
+        _dispatch(payload);
       },
       onDidReceiveBackgroundNotificationResponse:
           _onBackgroundNotificationResponse,
@@ -275,7 +301,7 @@ class NotificationService {
     await _plugin.cancel(id);
 
     final raw = todo.remindAt;
-    if (todo.done || raw == null) return;
+    if (todo.done || raw == null || !todo.remindNotifyEnabled) return;
 
     // 全天提醒：时=0 时默认推到当天 09:00
     DateTime when = raw;

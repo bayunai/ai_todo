@@ -11,12 +11,15 @@ class TodoTimeSelection {
   final DateTime? end;
   final bool isAllDay;
   final int repeatRule;
+  /// 是否调度系统到点通知；为 false 时仍返回所选时间/重复。
+  final bool notifyEnabled;
 
   const TodoTimeSelection({
     required this.start,
     required this.end,
     required this.isAllDay,
     required this.repeatRule,
+    this.notifyEnabled = true,
   });
 
   bool get isEmpty => start == null && end == null;
@@ -59,8 +62,8 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
   DateTime? _start;
   DateTime? _end;
   int _repeatRule = TodoRepeat.none;
-  /// `initial == null` 时默认开启（与原先默认草稿时间一致）；若传入 `initial` 且 `start == null` 则关闭。
-  late bool _reminderEnabled;
+  /// 控制是否推送系统通知；时间与重复与此独立。
+  late bool _notifyEnabled;
 
   @override
   void initState() {
@@ -87,8 +90,7 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
     }
     final anchor = _start ?? now;
     _visibleMonth = DateTime(anchor.year, anchor.month);
-    final ini = widget.initial;
-    _reminderEnabled = ini == null || ini.start != null;
+    _notifyEnabled = widget.initial?.notifyEnabled ?? true;
   }
 
   @override
@@ -132,23 +134,11 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
                 const SizedBox(height: 8),
                 if (_mode != TodoPickerMode.allDay) ...[
                   const Divider(height: 1),
-                  Opacity(
-                    opacity: _reminderEnabled ? 1.0 : 0.45,
-                    child: IgnorePointer(
-                      ignoring: !_reminderEnabled,
-                      child: _buildTimeRow(context, scheme),
-                    ),
-                  ),
+                  _buildTimeRow(context, scheme),
                 ],
-                _buildReminderSwitchRow(context, scheme),
+                _buildNotifySwitchRow(context, scheme),
                 const Divider(height: 1),
-                Opacity(
-                  opacity: _reminderEnabled ? 1.0 : 0.45,
-                  child: IgnorePointer(
-                    ignoring: !_reminderEnabled,
-                    child: _buildRepeatRow(context, scheme),
-                  ),
-                ),
+                _buildRepeatRow(context, scheme),
               ],
             ),
           ),
@@ -478,7 +468,6 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
   }
 
   Future<void> _pickTime({required bool isEnd}) async {
-    if (!_reminderEnabled) return;
     final base =
         (isEnd ? (_end ?? _start) : _start) ?? DateTime.now();
     var temp = DateTime(
@@ -576,19 +565,19 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
     );
   }
 
-  Widget _buildReminderSwitchRow(BuildContext context, ColorScheme scheme) {
+  Widget _buildNotifySwitchRow(BuildContext context, ColorScheme scheme) {
     final theme = Theme.of(context);
     return SwitchListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-      title: Text('提醒', style: theme.textTheme.bodyMedium),
+      title: Text('到点通知', style: theme.textTheme.bodyMedium),
       subtitle: Text(
-        '关闭后确定将不保存提醒时间',
+        '关闭后仍会保存所选时间与重复，仅不发送系统通知',
         style: theme.textTheme.bodySmall?.copyWith(
           color: scheme.onSurfaceVariant,
         ),
       ),
-      value: _reminderEnabled,
-      onChanged: (v) => setState(() => _reminderEnabled = v),
+      value: _notifyEnabled,
+      onChanged: (v) => setState(() => _notifyEnabled = v),
     );
   }
 
@@ -621,7 +610,6 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
   }
 
   Future<void> _pickRepeat() async {
-    if (!_reminderEnabled) return;
     final result = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
@@ -652,7 +640,6 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
   // --- Confirm / output -------------------------------------------------
 
   bool _canConfirm() {
-    if (!_reminderEnabled) return true;
     if (_start == null) return false;
     if (_mode == TodoPickerMode.range) {
       return _end != null && !_end!.isBefore(_start!);
@@ -662,18 +649,6 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
 
   void _onConfirm() {
     if (!_canConfirm()) return;
-    if (!_reminderEnabled) {
-      Navigator.pop(
-        context,
-        const TodoTimeSelection(
-          start: null,
-          end: null,
-          isAllDay: false,
-          repeatRule: TodoRepeat.none,
-        ),
-      );
-      return;
-    }
     DateTime? s = _start;
     DateTime? e = _end;
     final allDay = _mode == TodoPickerMode.allDay;
@@ -691,6 +666,7 @@ class _TodoTimePickerDialogState extends State<TodoTimePickerDialog> {
         end: e,
         isAllDay: allDay,
         repeatRule: _repeatRule,
+        notifyEnabled: _notifyEnabled,
       ),
     );
   }

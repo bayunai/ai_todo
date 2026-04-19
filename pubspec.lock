@@ -275,6 +275,13 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_overlay_window:
+    dependency: "direct main"
+    description:
+      path: "packages/flutter_overlay_window"
+      relative: true
+    source: path
+    version: "0.5.0"
   flutter_test:
     dependency: "direct dev"
     description: flutter

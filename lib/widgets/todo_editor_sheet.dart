@@ -62,6 +62,7 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
   DateTime? _remindEndAt;
   bool _remindIsAllDay = false;
   int _remindRepeat = TodoRepeat.none;
+  bool _remindNotifyEnabled = true;
   String? _parentId;
 
   bool get _isEditing => widget.editing != null;
@@ -77,6 +78,7 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
     _remindEndAt = e?.remindEndAt;
     _remindIsAllDay = e?.remindIsAllDay ?? false;
     _remindRepeat = e?.remindRepeatRule ?? TodoRepeat.none;
+    _remindNotifyEnabled = e?.remindNotifyEnabled ?? true;
     _parentId = e?.parentId ?? widget.initialParentId;
   }
 
@@ -233,7 +235,9 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
           children: [
             Tooltip(
               message: hasRemind
-                  ? '$remindSummary\n长按可清除提醒'
+                  ? (_remindNotifyEnabled
+                      ? '$remindSummary\n长按可清除提醒'
+                      : '$remindSummary\n（不发送系统通知）\n长按可清除提醒')
                   : remindSummary,
               child: IconButton(
                 style: smallColoredIcon(fg: remindColor, bg: remindBg),
@@ -304,6 +308,7 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
       _remindEndAt = null;
       _remindIsAllDay = false;
       _remindRepeat = TodoRepeat.none;
+      _remindNotifyEnabled = true;
     });
   }
 
@@ -318,6 +323,7 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
               end: _remindEndAt,
               isAllDay: _remindIsAllDay,
               repeatRule: _remindRepeat,
+              notifyEnabled: _remindNotifyEnabled,
             ),
     );
     if (result == null) return;
@@ -326,6 +332,7 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
       _remindEndAt = result.end;
       _remindIsAllDay = result.isAllDay;
       _remindRepeat = result.repeatRule;
+      _remindNotifyEnabled = result.notifyEnabled;
     });
   }
 
@@ -391,7 +398,7 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
 
     // 若设置了提醒：先申请通知/精确闹钟权限，未授予也不阻塞保存，仅提示
     String? permWarning;
-    if (_remindAt != null) {
+    if (_remindAt != null && _remindNotifyEnabled) {
       final granted = await NotificationService.ensurePermissions();
       if (!granted) {
         permWarning = '通知或精确闹钟权限未授予，提醒可能无法按时触发，可前往系统设置开启';
@@ -410,6 +417,7 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
         remindEndAt: _remindEndAt,
         remindIsAllDay: _remindIsAllDay,
         remindRepeatRule: _remindRepeat,
+        remindNotifyEnabled: _remindNotifyEnabled,
       );
       await HiveService.addTodo(todo);
     } else {
@@ -420,6 +428,7 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
       e.remindEndAt = _remindEndAt;
       e.remindIsAllDay = _remindIsAllDay;
       e.remindRepeatRule = _remindRepeat;
+      e.remindNotifyEnabled = _remindNotifyEnabled;
       if (e.parentId != _parentId) {
         e.parentId = _parentId;
         e.orderIndex = HiveService.nextOrderIndex(_parentId);

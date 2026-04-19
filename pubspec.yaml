@@ -43,6 +43,9 @@ dependencies:
   flutter_local_notifications: ^19.5.0
   timezone: ^0.10.0
   flutter_timezone: ^3.0.1
+  # 本地补丁：修复 OverlayService.onStartCommand(null Intent) NPE（见 packages/flutter_overlay_window）
+  flutter_overlay_window:
+    path: packages/flutter_overlay_window
 
 dev_dependencies:
   flutter_test:

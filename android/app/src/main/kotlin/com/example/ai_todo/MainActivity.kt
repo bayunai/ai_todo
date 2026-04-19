@@ -47,6 +47,28 @@ class MainActivity : FlutterActivity() {
                         ensureChannels()
                         result.success(null)
                     }
+                    "moveTaskToBack" -> {
+                        runOnUiThread {
+                            val finish: () -> Unit = {
+                                try {
+                                    moveTaskToBack(true)
+                                    result.success(null)
+                                } catch (e: Exception) {
+                                    result.error(
+                                        "MOVE_TASK",
+                                        e.message,
+                                        null,
+                                    )
+                                }
+                            }
+                            val decor = window?.decorView
+                            if (decor != null) {
+                                decor.post { finish() }
+                            } else {
+                                finish()
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }

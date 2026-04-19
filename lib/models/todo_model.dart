@@ -122,6 +122,10 @@ class TodoModel extends HiveObject {
   @HiveField(16, defaultValue: false)
   bool remindIsAllDay;
 
+  /// 是否在到点推送系统通知；为 false 时仍保存 [remindAt] 等，仅不调度通知。
+  @HiveField(17, defaultValue: true)
+  bool remindNotifyEnabled;
+
   TodoModel({
     required this.id,
     required this.title,
@@ -136,6 +140,7 @@ class TodoModel extends HiveObject {
     this.remindEndAt,
     this.remindRepeatRule = TodoRepeat.none,
     this.remindIsAllDay = false,
+    this.remindNotifyEnabled = true,
   });
 
   factory TodoModel.create({
@@ -148,6 +153,7 @@ class TodoModel extends HiveObject {
     DateTime? remindEndAt,
     int remindRepeatRule = TodoRepeat.none,
     bool remindIsAllDay = false,
+    bool remindNotifyEnabled = true,
   }) {
     final now = DateTime.now();
     return TodoModel(
@@ -162,6 +168,7 @@ class TodoModel extends HiveObject {
       remindEndAt: remindEndAt,
       remindRepeatRule: remindRepeatRule,
       remindIsAllDay: remindIsAllDay,
+      remindNotifyEnabled: remindNotifyEnabled,
     );
   }
 }

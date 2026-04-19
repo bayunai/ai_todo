@@ -48,4 +48,14 @@ class NativePrefs {
       // 渠道异常时静默
     }
   }
+
+  /// 将主任务栈移到后台（仅 Android）。用于通知悬浮窗出现后减轻「全屏进应用」观感。
+  static Future<void> moveTaskToBackIfAndroid() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('moveTaskToBack');
+    } catch (_) {
+      // 部分 ROM 或时机下会失败，静默即可
+    }
+  }
 }

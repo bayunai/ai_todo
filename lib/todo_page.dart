@@ -6,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'models/todo_model.dart';
 import 'services/hive_service.dart';
 import 'services/notification_service.dart';
+import 'services/todo_overlay_bridge.dart';
 import 'widgets/todo_editor_sheet.dart';
 import 'widgets/todo_quick_actions.dart';
 
@@ -82,7 +83,7 @@ class _TodoPageState extends State<TodoPage> {
   /// 收到通知点击后：
   /// - `panel:add` → 打开新建待办编辑器
   /// - `panel:open` → 仅切换 Tab（MainPage 已处理）
-  /// - 其它：按 todo.id 解析，展开祖先并打开编辑弹窗
+  /// - 其它：按 todo.id 解析，展开祖先；Android 可开悬浮窗时优先悬浮窗，否则居中快捷弹窗。
   void _openTodoByNotification(String payload) {
     if (!mounted) return;
     if (payload == NotificationService.panelAddPayload) {
@@ -100,7 +101,24 @@ class _TodoPageState extends State<TodoPage> {
         pid = p?.parentId;
       }
     });
-    showTodoEditor(context, todo: target);
+    unawaited(_openTodoQuickUiAfterExpand(payload, target));
+  }
+
+  Future<void> _openTodoQuickUiAfterExpand(
+    String payload,
+    TodoModel target,
+  ) async {
+    if (await TodoOverlayBridge.consumeOverlaySkipTodoQuickUiIfShowing(
+          payload,
+        )) {
+      return;
+    }
+    final usedOverlay =
+        await TodoOverlayBridge.tryShowQuickActionsForTodoId(payload);
+    if (!mounted) return;
+    if (!usedOverlay) {
+      showTodoQuickActions(context, target);
+    }
   }
 
   @override
@@ -625,8 +643,11 @@ class _TodoCard extends StatelessWidget {
                                         ),
                                         if (t.remindAt != null)
                                           _TimeChip(
-                                            icon: Icons
-                                                .notifications_active_outlined,
+                                            icon: t.remindNotifyEnabled
+                                                ? Icons
+                                                    .notifications_active_outlined
+                                                : Icons
+                                                    .notifications_off_outlined,
                                             text: formatTodoTime(
                                               start: t.remindAt,
                                               end: t.remindEndAt,

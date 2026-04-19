@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- 允许把应用加入系统「电池优化」白名单：解决 MIUI/OPPO/Vivo 锁屏后不触发闹钟 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- 悬浮窗（flutter_overlay_window）：仅用于从通知快捷操作 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:label="ai_todo"
@@ -41,6 +45,15 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <service
+            android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="待办从通知点入时显示快捷操作悬浮窗，不用于后台常驻业务" />
+        </service>
 
         <!-- flutter_local_notifications 所需 receiver -->
         <receiver
