@@ -57,7 +57,6 @@ class TodoEditorSheet extends StatefulWidget {
 class _TodoEditorSheetState extends State<TodoEditorSheet> {
   late final TextEditingController _titleCtrl;
   late final TextEditingController _noteCtrl;
-  final FocusNode _titleFocus = FocusNode();
   int _priority = TodoPriority.normal;
   DateTime? _remindAt;
   DateTime? _remindEndAt;
@@ -79,22 +78,12 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
     _remindIsAllDay = e?.remindIsAllDay ?? false;
     _remindRepeat = e?.remindRepeatRule ?? TodoRepeat.none;
     _parentId = e?.parentId ?? widget.initialParentId;
-
-    // 新建场景下等 Sheet 的上滑动画（~250ms）结束后再拉键盘，
-    // 避免入场动画与 IME 动画并发时 Padding(bottom: viewInsets) 逐帧重排
-    // 造成掉帧。编辑场景下不自动聚焦。
-    if (!_isEditing) {
-      Future.delayed(const Duration(milliseconds: 280), () {
-        if (mounted) _titleFocus.requestFocus();
-      });
-    }
   }
 
   @override
   void dispose() {
     _titleCtrl.dispose();
     _noteCtrl.dispose();
-    _titleFocus.dispose();
     super.dispose();
   }
 
@@ -109,109 +98,199 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final viewInsets = MediaQuery.viewInsetsOf(context).bottom;
+    final maxH = MediaQuery.sizeOf(context).height * 0.88;
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: viewInsets),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+    // 不用固定 height 的 SizedBox，避免内容少时整块撑满 88% 屏高；内层 Column 必须 min，
+    // 否则在 Expanded 里会纵向撑满，父待办下出现大块空白。
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxH),
+      child: Padding(
+        padding: EdgeInsets.only(bottom: viewInsets),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: scheme.outlineVariant,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            Text(
-              _isEditing ? '编辑待办' : '新建待办',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _titleCtrl,
-              focusNode: _titleFocus,
-              textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(
-                labelText: '标题',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _noteCtrl,
-              maxLines: 3,
-              minLines: 1,
-              decoration: const InputDecoration(
-                labelText: '备注（可选）',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text('紧急程度',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    )),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: TodoPriority.values.map((p) {
-                final selected = _priority == p;
-                final color = TodoPriority.color(p, scheme);
-                return ChoiceChip(
-                  showCheckmark: false,
-                  avatar: Icon(
-                    Icons.flag_rounded,
-                    size: 14,
-                    color: selected ? Colors.white : color,
-                  ),
-                  label: Text(
-                    TodoPriority.label(p),
-                    style: TextStyle(
-                      color: selected ? Colors.white : scheme.onSurface,
-                      fontWeight: FontWeight.w600,
+            _buildTopBar(context, scheme),
+            Flexible(
+              fit: FlexFit.loose,
+              child: ListView(
+                shrinkWrap: true,
+                physics: const ClampingScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: scheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
-                  selected: selected,
-                  selectedColor: color,
-                  backgroundColor: color.withValues(alpha: 0.12),
-                  side: BorderSide.none,
-                  onSelected: (_) => setState(() => _priority = p),
-                );
-              }).toList(),
+                  Text(
+                    _isEditing ? '编辑待办' : '新建待办',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _titleCtrl,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(
+                      labelText: '标题',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _noteCtrl,
+                    maxLines: 3,
+                    minLines: 1,
+                    decoration: const InputDecoration(
+                      labelText: '备注（可选）',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildParentSelector(context, scheme),
+                ],
+              ),
             ),
-            const SizedBox(height: 16),
-            _buildRemindRow(context, scheme),
-            const SizedBox(height: 16),
-            _buildParentSelector(context, scheme),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
+            Divider(height: 1, color: scheme.outlineVariant),
+            _buildMetaToolbar(context, scheme),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar(BuildContext context, ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: '关闭',
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.close),
+          ),
+          const Spacer(),
+          FilledButton(
+            onPressed: _save,
+            child: Text(_isEditing ? '保存' : '添加'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetaToolbar(BuildContext context, ColorScheme scheme) {
+    final hasRemind = _remindAt != null;
+    final remindSummary = hasRemind
+        ? formatTodoTime(
+            start: _remindAt,
+            end: _remindEndAt,
+            isAllDay: _remindIsAllDay,
+          )
+        : '设置提醒时间';
+
+    // 略大于此前「一半」尺寸；底边留出安全区 + 额外间距，避免贴底被圆角/手势条裁切
+    const double kIconSize = 18;
+    const double kBtn = 36;
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + 14;
+    final remindColor = scheme.primary;
+    final remindBg = remindColor.withValues(alpha: 0.14);
+    final priColor = TodoPriority.color(_priority, scheme);
+    final priBg = priColor.withValues(alpha: 0.14);
+
+    ButtonStyle smallColoredIcon({
+      required Color fg,
+      required Color bg,
+    }) {
+      return IconButton.styleFrom(
+        backgroundColor: bg,
+        foregroundColor: fg,
+        minimumSize: const Size(kBtn, kBtn),
+        maximumSize: const Size(kBtn, kBtn),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+      );
+    }
+
+    return Material(
+      color: scheme.surface,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(12, 4, 12, bottomInset),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: [
+            Tooltip(
+              message: hasRemind
+                  ? '$remindSummary\n长按可清除提醒'
+                  : remindSummary,
+              child: IconButton(
+                style: smallColoredIcon(fg: remindColor, bg: remindBg),
+                onPressed: _pickRemind,
+                onLongPress: hasRemind ? _clearRemind : null,
+                icon: Icon(
+                  hasRemind ? Icons.schedule : Icons.schedule_outlined,
+                  size: kIconSize,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _save,
-                    icon: const Icon(Icons.check),
-                    label: Text(_isEditing ? '保存' : '添加'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            MenuAnchor(
+              menuChildren: [
+                for (final p in TodoPriority.values)
+                  MenuItemButton(
+                    onPressed: () {
+                      setState(() => _priority = p);
+                    },
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.flag_rounded,
+                          size: 20,
+                          color: TodoPriority.color(p, scheme),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(TodoPriority.label(p)),
+                        if (p == _priority) ...[
+                          const SizedBox(width: 8),
+                          Icon(Icons.check, size: 18, color: scheme.primary),
+                        ],
+                      ],
+                    ),
                   ),
-                ),
               ],
+              builder: (context, controller, child) {
+                return Tooltip(
+                  message: '紧急程度：${TodoPriority.label(_priority)}',
+                  child: IconButton(
+                    style: smallColoredIcon(fg: priColor, bg: priBg),
+                    onPressed: () {
+                      if (controller.isOpen) {
+                        controller.close();
+                      } else {
+                        controller.open();
+                      }
+                    },
+                    icon: Icon(
+                      Icons.flag_rounded,
+                      size: kIconSize,
+                      color: priColor,
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -219,64 +298,13 @@ class _TodoEditorSheetState extends State<TodoEditorSheet> {
     );
   }
 
-  Widget _buildRemindRow(BuildContext context, ColorScheme scheme) {
-    final hasValue = _remindAt != null;
-    return Row(
-      children: [
-        Icon(Icons.notifications_active_outlined,
-            size: 18, color: scheme.onSurfaceVariant),
-        const SizedBox(width: 8),
-        Text('提醒时间', style: Theme.of(context).textTheme.bodyMedium),
-        const Spacer(),
-        if (!hasValue)
-          TextButton.icon(
-            onPressed: _pickRemind,
-            icon: const Icon(Icons.add, size: 16),
-            label: const Text('添加'),
-          )
-        else
-          Flexible(
-            child: Wrap(
-              alignment: WrapAlignment.end,
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                InputChip(
-                  avatar:
-                      Icon(Icons.schedule, size: 16, color: scheme.primary),
-                  label: Text(
-                    formatTodoTime(
-                      start: _remindAt,
-                      end: _remindEndAt,
-                      isAllDay: _remindIsAllDay,
-                    ),
-                  ),
-                  onPressed: _pickRemind,
-                  onDeleted: () => setState(() {
-                    _remindAt = null;
-                    _remindEndAt = null;
-                    _remindIsAllDay = false;
-                    _remindRepeat = TodoRepeat.none;
-                  }),
-                  deleteIcon: const Icon(Icons.close, size: 16),
-                  side: BorderSide.none,
-                  backgroundColor: scheme.primary.withValues(alpha: 0.1),
-                ),
-                if (_remindRepeat != TodoRepeat.none)
-                  Chip(
-                    avatar: Icon(Icons.repeat,
-                        size: 14, color: scheme.tertiary),
-                    label: Text(TodoRepeat.label(_remindRepeat)),
-                    visualDensity: VisualDensity.compact,
-                    side: BorderSide.none,
-                    backgroundColor:
-                        scheme.tertiary.withValues(alpha: 0.1),
-                  ),
-              ],
-            ),
-          ),
-      ],
-    );
+  void _clearRemind() {
+    setState(() {
+      _remindAt = null;
+      _remindEndAt = null;
+      _remindIsAllDay = false;
+      _remindRepeat = TodoRepeat.none;
+    });
   }
 
   Future<void> _pickRemind() async {
