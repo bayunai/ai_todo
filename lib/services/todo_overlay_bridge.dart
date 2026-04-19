@@ -130,10 +130,25 @@ class TodoOverlayBridge {
         overlayContent: todo.title.isEmpty ? '待办' : todo.title,
       );
 
-      await Future<void>.delayed(const Duration(milliseconds: 280));
-      await FlutterOverlayWindow.shareData(
-        TodoQuickActionViewData.fromModel(todo).toShareMap(),
-      );
+      // 给 OverlayService 附着 FlutterView 一帧时间；数据在 overlay_main 里已尽早注册通道。
+      await Future<void>.delayed(const Duration(milliseconds: 32));
+      final snapshot = TodoQuickActionViewData.fromModel(todo).toShareMap();
+      var dataDelivered = false;
+      for (var attempt = 0; attempt < 40; attempt++) {
+        try {
+          await FlutterOverlayWindow.shareData(snapshot).timeout(
+            const Duration(milliseconds: 450),
+            onTimeout: () => throw TimeoutException('overlay shareData'),
+          );
+          dataDelivered = true;
+          break;
+        } catch (_) {
+          await Future<void>.delayed(const Duration(milliseconds: 40));
+        }
+      }
+      if (!dataDelivered) {
+        throw TimeoutException('overlay shareData after retries');
+      }
     } catch (_) {
       try {
         await FlutterOverlayWindow.closeOverlay();

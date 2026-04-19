@@ -108,6 +108,8 @@ class _TodoPageState extends State<TodoPage> {
     String payload,
     TodoModel target,
   ) async {
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
     if (await TodoOverlayBridge.consumeOverlaySkipTodoQuickUiIfShowing(
           payload,
         )) {

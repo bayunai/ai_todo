@@ -128,10 +128,6 @@ class NotificationService {
   static String? _pendingPayload;
   static bool _initialized = false;
 
-  /// Android：点「待办提醒」通知时，在发 [onTap] 之前先执行（例如弹出悬浮窗）。
-  /// 由 [main.dart] 注册，避免 [notification_service] 依赖悬浮窗模块产生循环 import。
-  static Future<void> Function(String todoId)? androidTodoTapPreprocessor;
-
   /// 点击通知后的 payload（todo.id）广播流；前台/后台/冷启动都从此出。
   static Stream<String> get onTap => _tapCtrl.stream;
 
@@ -152,18 +148,6 @@ class NotificationService {
   /// 内部：统一写 pending + broadcast
   static void _dispatch(String payload) {
     _pendingPayload = payload;
-    if (!_tapCtrl.isClosed) {
-      _tapCtrl.add(payload);
-    }
-  }
-
-  /// 主线程：先 [androidTodoTapPreprocessor]（若已注册），再发 [onTap]。
-  static Future<void> _emitTodoTapWithPreprocessor(String payload) async {
-    _pendingPayload = payload;
-    final pre = androidTodoTapPreprocessor;
-    if (pre != null) {
-      await pre(payload);
-    }
     if (!_tapCtrl.isClosed) {
       _tapCtrl.add(payload);
     }
@@ -207,13 +191,8 @@ class NotificationService {
         final payload = response.payload;
         if (payload == null || payload.isEmpty) return;
 
-        if (Platform.isAndroid &&
-            payload != panelOpenPayload &&
-            payload != panelAddPayload &&
-            HiveService.getTodoById(payload) != null) {
-          unawaited(_emitTodoTapWithPreprocessor(payload));
-          return;
-        }
+        // 与 iOS 一致立即 [_dispatch]：若先 await 悬浮窗再发流，shareData/原生卡住会导致
+        // [onTap] 永不触发、首帧 [consumePendingPayload] 也为空时界面无任何反应。
         _dispatch(payload);
       },
       onDidReceiveBackgroundNotificationResponse:

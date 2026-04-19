@@ -9,6 +9,8 @@ import 'widgets/todo_quick_actions.dart';
 @pragma('vm:entry-point')
 void overlayMain() {
   WidgetsFlutterBinding.ensureInitialized();
+  // 访问 getter 会注册 BasicMessageChannel 处理端；否则首帧前主引擎 shareData 可能长时间无人应答。
+  final _ = FlutterOverlayWindow.overlayListener;
   runApp(const _OverlayRootApp());
 }
 
@@ -80,14 +82,53 @@ class _OverlayHomeState extends State<_OverlayHome> {
   Widget build(BuildContext context) {
     final d = _data;
     if (d == null) {
-      return const Material(
+      final scheme = Theme.of(context).colorScheme;
+      return Material(
         color: Colors.transparent,
-        child: Center(
-          child: SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(color: Colors.black.withValues(alpha: 0.38)),
+            Center(
+              child: Material(
+                elevation: 10,
+                borderRadius: BorderRadius.circular(20),
+                color: scheme.surface,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 36, vertical: 28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 36,
+                        height: 36,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        '正在载入待办…',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '首次打开可能稍慢',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       );
     }

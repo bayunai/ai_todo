@@ -26,11 +26,7 @@ Future<void> main() async {
   final void Function() overlayEntryKeep = overlayMain;
   assert(overlayEntryKeep == overlayMain);
 
-  // 悬浮窗监听须在 [tryShow] 之前注册；并尽早尝试冷启动「点通知进待办」悬浮窗，避免等 [TodoPage] 首帧。
   TodoOverlayBridge.initMainSide();
-  NotificationService.androidTodoTapPreprocessor = (id) async {
-    await TodoOverlayBridge.tryShowQuickActionsForTodoId(id);
-  };
 
   runApp(const MyApp());
 }

@@ -112,9 +112,6 @@ public class FlutterOverlayWindowPlugin implements
         } else if (call.method.equals("isOverlayActive")) {
             result.success(OverlayService.isRunning);
             return;
-        } else if (call.method.equals("isOverlayActive")) {
-            result.success(OverlayService.isRunning);
-            return;
         } else if (call.method.equals("moveOverlay")) {
             int x = call.argument("x");
             int y = call.argument("y");
@@ -126,6 +123,8 @@ public class FlutterOverlayWindowPlugin implements
                 final Intent i = new Intent(context, OverlayService.class);
                 context.stopService(i);
                 result.success(true);
+            } else {
+                result.success(false);
             }
             return;
         } else {
@@ -168,9 +167,13 @@ public class FlutterOverlayWindowPlugin implements
 
     @Override
     public void onMessage(@Nullable Object message, @NonNull BasicMessageChannel.Reply reply) {
-        BasicMessageChannel overlayMessageChannel = new BasicMessageChannel(
-                FlutterEngineCache.getInstance().get(OverlayConstants.CACHED_TAG)
-                        .getDartExecutor(),
+        FlutterEngine engine = FlutterEngineCache.getInstance().get(OverlayConstants.CACHED_TAG);
+        if (engine == null) {
+            reply.reply(null);
+            return;
+        }
+        BasicMessageChannel<Object> overlayMessageChannel = new BasicMessageChannel<>(
+                engine.getDartExecutor(),
                 OverlayConstants.MESSENGER_TAG, JSONMessageCodec.INSTANCE);
         overlayMessageChannel.send(message, reply);
     }
