@@ -46,6 +46,7 @@ app.*.map.json
 
 # Android：本地机路径、Gradle 缓存、签名（勿提交到 GitHub）
 **/android/.gradle/
+**/android/.kotlin/
 **/android/local.properties
 **/android/captures/
 **/android/**/GeneratedPluginRegistrant.java
